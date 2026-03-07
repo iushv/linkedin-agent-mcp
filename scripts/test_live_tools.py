@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--person-username",
-        default="stickerdaniel",
+        default="ayushkumar-exl",
         help="Profile slug for get_person_profile.",
     )
     parser.add_argument(
@@ -141,7 +141,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--write-profile-url",
-        default="https://www.linkedin.com/in/stickerdaniel/",
+        default="https://www.linkedin.com/in/ayushkumar-exl/",
         help="Profile URL used for write dry runs.",
     )
     parser.add_argument(

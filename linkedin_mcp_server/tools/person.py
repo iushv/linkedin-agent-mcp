@@ -43,8 +43,8 @@ def register_person_tools(mcp: FastMCP) -> None:
 
         Args:
             linkedin_username: LinkedIn username or profile URL/path
-                (e.g., "stickerdaniel", "/in/stickerdaniel/",
-                "https://www.linkedin.com/in/stickerdaniel/")
+                (e.g., "ayushkumar-exl", "/in/ayushkumar-exl/",
+                "https://www.linkedin.com/in/ayushkumar-exl/")
             ctx: FastMCP context for progress reporting
             sections: Comma-separated list of extra sections to scrape.
                 The main profile page is always included.

@@ -2,12 +2,16 @@
 
 <p align="left">
   <a href="https://pypi.org/project/linkedin-scraper-mcp/" target="_blank"><img src="https://img.shields.io/pypi/v/linkedin-scraper-mcp?color=blue" alt="PyPI"></a>
-  <a href="https://github.com/stickerdaniel/linkedin-mcp-server/actions/workflows/ci.yml" target="_blank"><img src="https://github.com/stickerdaniel/linkedin-mcp-server/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"></a>
-  <a href="https://github.com/stickerdaniel/linkedin-mcp-server/actions/workflows/release.yml" target="_blank"><img src="https://github.com/stickerdaniel/linkedin-mcp-server/actions/workflows/release.yml/badge.svg?branch=main" alt="Release"></a>
-  <a href="https://github.com/stickerdaniel/linkedin-mcp-server/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-Apache%202.0-brightgreen?labelColor=32383f" alt="License"></a>
+  <a href="https://github.com/iushv/linkedin-agent-mcp/actions/workflows/ci.yml" target="_blank"><img src="https://github.com/iushv/linkedin-agent-mcp/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"></a>
+  <a href="https://github.com/iushv/linkedin-agent-mcp/actions/workflows/release.yml" target="_blank"><img src="https://github.com/iushv/linkedin-agent-mcp/actions/workflows/release.yml/badge.svg?branch=main" alt="Release"></a>
+  <a href="https://github.com/iushv/linkedin-agent-mcp/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-Apache%202.0-brightgreen?labelColor=32383f" alt="License"></a>
 </p>
 
 Through this LinkedIn MCP server, AI assistants like Claude can connect to your LinkedIn. Access profiles and companies, search for jobs and people, manage saved jobs, update job-search profile settings, and inspect analytics.
+
+## Attribution
+
+This project was originally bootstrapped from Daniel Sticker's LinkedIn MCP work and has since been extended into a broader LinkedIn automation and job-search manager. Credit for the original foundation goes to Daniel Sticker and the original `linkedin-mcp-server` project.
 
 ## Installation Methods
 
@@ -21,7 +25,7 @@ Through this LinkedIn MCP server, AI assistants like Claude can connect to your 
 ## Usage Examples
 
 ```
-Research the background of this candidate https://www.linkedin.com/in/stickerdaniel/
+Research the background of this candidate https://www.linkedin.com/in/ayushkumar-exl/
 ```
 
 ```
@@ -217,7 +221,7 @@ This opens a browser window where you log in manually (5 minute timeout for 2FA,
       "args": [
         "run", "--rm", "-i",
         "-v", "~/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
-        "stickerdaniel/linkedin-mcp-server:latest"
+        "iushv/linkedin-agent-mcp:latest"
       ]
     }
   }
@@ -263,7 +267,7 @@ This opens a browser window where you log in manually (5 minute timeout for 2FA,
 docker run -it --rm \
   -v ~/.linkedin-mcp:/home/pwuser/.linkedin-mcp \
   -p 8080:8080 \
-  stickerdaniel/linkedin-mcp-server:latest \
+  iushv/linkedin-agent-mcp:latest \
   --transport streamable-http --host 0.0.0.0 --port 8080 --path /mcp
 ```
 
@@ -316,7 +320,7 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 
 **One-click installation** for Claude Desktop users:
 
-1. Download the [DXT extension](https://github.com/stickerdaniel/linkedin-mcp-server/releases/latest)
+1. Download the [DXT extension](https://github.com/iushv/linkedin-agent-mcp/releases/latest)
 2. Double-click to install into Claude Desktop
 3. Create a session: `uvx linkedin-scraper-mcp --login`
 
@@ -335,7 +339,7 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 - **Fix:** Pre-pull the image before first use:
 
   ```bash
-  docker pull stickerdaniel/linkedin-mcp-server:2.3.0
+  docker pull iushv/linkedin-agent-mcp:2.3.0
   ```
 
 - Then restart Claude Desktop
@@ -370,7 +374,7 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/stickerdaniel/linkedin-mcp-server
+git clone https://github.com/iushv/linkedin-agent-mcp
 cd linkedin-mcp-server
 
 # 2. Install UV package manager (if not already installed)
@@ -518,7 +522,7 @@ uv run python scripts/test_live_tools.py \
 
 </details>
 
-Feel free to open an [issue](https://github.com/stickerdaniel/linkedin-mcp-server/issues) or [PR](https://github.com/stickerdaniel/linkedin-mcp-server/pulls)!
+Feel free to open an [issue](https://github.com/iushv/linkedin-agent-mcp/issues) or [PR](https://github.com/iushv/linkedin-agent-mcp/pulls)!
 
 <br/>
 <br/>

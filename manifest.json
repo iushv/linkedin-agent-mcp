@@ -4,15 +4,14 @@
   "display_name": "LinkedIn MCP Server",
   "version": "4.0.0",
   "description": "Connect Claude to LinkedIn for profiles, companies, and job details",
-  "long_description": "# LinkedIn MCP Server\n\nConnect Claude to your LinkedIn account. Access profiles, companies, and job postings through a Docker container on your machine.\n\n## Features\n- **Profile Access**: Get detailed LinkedIn profile information including work history, education, and skills\n- **Company Profiles**: Extract comprehensive company information and details\n- **Job Details**: Retrieve job posting information from LinkedIn URLs\n- **Job Search**: Search for jobs with keywords and location filters\n\n## First-Time Setup\n\n### 1. Pre-pull Docker Image (Required)\nRun this command first to avoid connection timeouts:\n```\ndocker pull stickerdaniel/linkedin-mcp-server:4.0.0",
+  "long_description": "# LinkedIn MCP Server\n\nConnect Claude to your LinkedIn account. Access profiles, companies, and job postings through a Docker container on your machine.\n\n## Features\n- **Profile Access**: Get detailed LinkedIn profile information including work history, education, and skills\n- **Company Profiles**: Extract comprehensive company information and details\n- **Job Details**: Retrieve job posting information from LinkedIn URLs\n- **Job Search**: Search for jobs with keywords and location filters\n\n## First-Time Setup\n\n### 1. Pre-pull Docker Image (Required)\nRun this command first to avoid connection timeouts:\n```\ndocker pull iushv/linkedin-agent-mcp:4.0.0",
   "author": {
-    "name": "Daniel Sticker",
-    "email": "daniel@sticker.name",
-    "url": "https://daniel.sticker.name/"
+    "name": "Ayush Kumar",
+    "url": "https://github.com/iushv/linkedin-agent-mcp"
   },
-  "homepage": "https://github.com/stickerdaniel/linkedin-mcp-server",
-  "documentation": "https://github.com/stickerdaniel/linkedin-mcp-server#readme",
-  "support": "https://github.com/stickerdaniel/linkedin-mcp-server/issues",
+  "homepage": "https://github.com/iushv/linkedin-agent-mcp",
+  "documentation": "https://github.com/iushv/linkedin-agent-mcp#readme",
+  "support": "https://github.com/iushv/linkedin-agent-mcp/issues",
   "license": "MIT",
   "keywords": ["linkedin", "scraping", "mcp", "profiles", "companies", "jobs"],
   "icon": "assets/icons/linkedin.svg",
@@ -26,7 +25,7 @@
         "run", "--rm", "-i",
         "-v", "${HOME}/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
         "-e", "LOG_LEVEL=DEBUG",
-        "stickerdaniel/linkedin-mcp-server:4.0.0"
+        "iushv/linkedin-agent-mcp:4.0.0"
       ]
     }
   },

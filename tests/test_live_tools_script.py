@@ -66,7 +66,7 @@ def reset_fake_client():
 def make_args(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
     data = {
         "url": "http://127.0.0.1:8080/mcp",
-        "person_username": "stickerdaniel",
+        "person_username": "ayushkumar-exl",
         "company_name": "anthropicresearch",
         "job_id": "4252026496",
         "job_keywords": "python developer",
@@ -75,7 +75,7 @@ def make_args(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "analytics_limit": 3,
         "conversation_limit": 5,
         "invitation_limit": 5,
-        "write_profile_url": "https://www.linkedin.com/in/stickerdaniel/",
+        "write_profile_url": "https://www.linkedin.com/in/ayushkumar-exl/",
         "post_url": "https://www.linkedin.com/feed/update/urn:li:activity:1/",
         "skip_close_session": False,
         "tool_timeout": 90,

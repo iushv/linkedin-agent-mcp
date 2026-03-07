@@ -5,7 +5,7 @@ description = "MCP server for LinkedIn profile, company, and job scraping with C
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    { name = "Daniel Sticker", email = "daniel@sticker.name" }
+    { name = "Ayush Kumar" }
 ]
 license = "Apache-2.0"
 keywords = [
@@ -39,11 +39,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/stickerdaniel/linkedin-mcp-server"
-Documentation = "https://github.com/stickerdaniel/linkedin-mcp-server#readme"
-Repository = "https://github.com/stickerdaniel/linkedin-mcp-server"
-Issues = "https://github.com/stickerdaniel/linkedin-mcp-server/issues"
-Changelog = "https://github.com/stickerdaniel/linkedin-mcp-server/releases"
+Homepage = "https://github.com/iushv/linkedin-agent-mcp"
+Documentation = "https://github.com/iushv/linkedin-agent-mcp#readme"
+Repository = "https://github.com/iushv/linkedin-agent-mcp"
+Issues = "https://github.com/iushv/linkedin-agent-mcp/issues"
+Changelog = "https://github.com/iushv/linkedin-agent-mcp/releases"
 
 [project.scripts]
 linkedin-mcp-server = "linkedin_mcp_server.cli_main:main"

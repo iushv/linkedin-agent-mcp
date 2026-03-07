@@ -41,7 +41,7 @@ uvx linkedin-scraper-mcp --login
       "args": [
         "run", "--rm", "-i",
         "-v", "~/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
-        "stickerdaniel/linkedin-mcp-server:latest"
+        "iushv/linkedin-agent-mcp:latest"
       ]
     }
   }
@@ -79,7 +79,7 @@ uvx linkedin-scraper-mcp --login
         "run", "-i", "--rm",
         "-v", "~/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
         "-e", "TIMEOUT=10000",
-        "stickerdaniel/linkedin-mcp-server"
+        "iushv/linkedin-agent-mcp"
       ]
     }
   }
@@ -88,5 +88,5 @@ uvx linkedin-scraper-mcp --login
 
 ## Repository
 
-- **Source**: <https://github.com/stickerdaniel/linkedin-mcp-server>
+- **Source**: <https://github.com/iushv/linkedin-agent-mcp>
 - **License**: Apache 2.0
