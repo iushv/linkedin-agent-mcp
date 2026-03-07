@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import re
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 from urllib.parse import quote_plus
@@ -44,6 +45,29 @@ _SHARED_CONNECTIONS_RE = re.compile(
 )
 _RESULT_COUNT_RE = re.compile(r"([\d,]+)\+?\s+results", re.IGNORECASE)
 _VALID_MATCH_MODES = {"strict", "auto", "broad"}
+
+
+@dataclass
+class _ResolvedPeopleFilters:
+    filters_applied: dict[str, str | None]
+    warnings: list[str]
+    current_company: ResolvedCompany | None
+    past_company: ResolvedCompany | None
+    geo: ResolvedGeo | None = None
+
+
+@dataclass
+class _ExtractionDefaults:
+    current_company: str | None = None
+    past_company: str | None = None
+
+
+@dataclass
+class _MatchFilters:
+    current_company: str | None = None
+    past_company: str | None = None
+    location: str | None = None
+    title_keyword: str | None = None
 
 
 def _normalize_person_profile_url(href: str | None) -> str | None:
@@ -304,7 +328,7 @@ async def _resolve_people_filters(
     current_company: str | None = None,
     past_company: str | None = None,
     location: str | None = None,
-) -> tuple[dict[str, str | None], list[str], ResolvedCompany | None, ResolvedCompany | None]:
+) -> _ResolvedPeopleFilters:
     warnings: list[str] = []
     filters_applied: dict[str, str | None] = {
         "current_company": None,
@@ -367,7 +391,61 @@ async def _resolve_people_filters(
                 f"Could not resolve location='{location}'; search ran without that filter"
             )
 
-    return filters_applied, warnings, current_result, past_result
+    return _ResolvedPeopleFilters(
+        filters_applied=filters_applied,
+        warnings=warnings,
+        current_company=current_result,
+        past_company=past_result,
+        geo=geo_result,
+    )
+
+
+async def _resolve_company_people_filters(
+    *,
+    company_name: str,
+    past_company: str | None = None,
+) -> tuple[ResolvedCompany | None, ResolvedCompany | None, list[str], str]:
+    async def _resolve_primary_company() -> ResolvedCompany | None:
+        return await resolve_company(company_name)
+
+    primary_task = asyncio.create_task(_resolve_primary_company())
+    past_task: asyncio.Task[ResolvedCompany | None] | None = None
+    if past_company:
+        past_task = asyncio.create_task(resolve_company(past_company))
+
+    try:
+        primary_result = await asyncio.wait_for(
+            primary_task,
+            timeout=_RESOLUTION_BUDGET_SECONDS,
+        )
+    except Exception:
+        primary_result = None
+
+    try:
+        past_result = (
+            await asyncio.wait_for(past_task, timeout=_RESOLUTION_BUDGET_SECONDS)
+            if past_task is not None
+            else None
+        )
+    except Exception:
+        past_result = None
+
+    warnings: list[str] = []
+    slug = (
+        primary_result.company_slug
+        if primary_result
+        else quote_plus(company_name.strip().lower().replace(" ", "-"))
+    )
+    if primary_result is None:
+        warnings.append(
+            f"Could not resolve company_name='{company_name}'; using best-effort slug '{slug}'"
+        )
+    if past_company and past_result is None:
+        warnings.append(
+            f"Could not resolve past_company='{past_company}'; search ran without that filter"
+        )
+
+    return primary_result, past_result, warnings, slug
 
 
 def _build_people_search_url(
@@ -452,6 +530,77 @@ async def _extract_people_results(
     return people, partial
 
 
+async def _load_people_page(page_obj: Any, url: str, *, debug_label: str) -> None:
+    await goto_and_check(page_obj, url)
+    try:
+        await page_obj.wait_for_selector("main", timeout=3000)
+    except Exception:
+        logger.debug("%s page missing <main> for %s", debug_label, url)
+    await page_obj.evaluate("window.scrollBy(0, document.body.scrollHeight * 0.5)")
+
+
+async def _run_people_extraction(
+    *,
+    page_obj: Any,
+    url: str,
+    debug_label: str,
+    card_group: str,
+    card_key: str,
+    limit: int,
+    defaults: _ExtractionDefaults,
+    matches: _MatchFilters | None = None,
+) -> tuple[list[PersonCard], bool]:
+    await _load_people_page(page_obj, url, debug_label=debug_label)
+    started_at = perf_counter()
+    return await _extract_people_results(
+        page=page_obj,
+        card_group=card_group,
+        card_key=card_key,
+        limit=limit,
+        started_at=started_at,
+        default_current_company=defaults.current_company,
+        default_past_company=defaults.past_company,
+        match_current_company=matches.current_company if matches else None,
+        match_past_company=matches.past_company if matches else None,
+        match_location=matches.location if matches else None,
+        match_title_keyword=matches.title_keyword if matches else None,
+    )
+
+
+async def _extract_total_results_from_page(page_obj: Any) -> int | None:
+    try:
+        page_text = await page_obj.locator("body").inner_text(timeout=1000)
+    except Exception:
+        return None
+    return _extract_total_count(page_text)
+
+
+def _build_people_payload(
+    *,
+    results: list[PersonCard],
+    page: int,
+    limit: int,
+    total: int | None,
+    partial: bool,
+    warnings: list[str],
+    filters_applied: dict[str, Any],
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response = build_paginated_response(
+        results=results,
+        page=page,
+        limit=limit,
+        total=total,
+        partial=partial,
+        warnings=warnings or None,
+    )
+    payload = response.to_dict()
+    payload["filters_applied"] = filters_applied
+    if extras:
+        payload.update(extras)
+    return payload
+
+
 def register_people_tools(mcp: FastMCP) -> None:
     """Register people-search tools."""
 
@@ -487,12 +636,10 @@ def register_people_tools(mcp: FastMCP) -> None:
                     progress=0, total=100, message="Resolving people search filters"
                 )
 
-            filters_applied, warnings, current_result, past_result = (
-                await _resolve_people_filters(
-                    current_company=current_company,
-                    past_company=past_company,
-                    location=location,
-                )
+            resolved = await _resolve_people_filters(
+                current_company=current_company,
+                past_company=past_company,
+                location=location,
             )
             browser = await get_or_create_browser()
             page_obj = browser.page
@@ -505,15 +652,15 @@ def register_people_tools(mcp: FastMCP) -> None:
                 )
                 search_url = _build_people_search_url(
                     keywords=search_keywords or keywords,
-                    geo_id=filters_applied["location"],
+                    geo_id=resolved.filters_applied["location"],
                     page=current_page,
                 )
             else:
                 search_url = _build_people_search_url(
                     keywords=keywords,
-                    current_company_id=filters_applied["current_company"],
-                    past_company_id=filters_applied["past_company"],
-                    geo_id=filters_applied["location"],
+                    current_company_id=resolved.filters_applied["current_company"],
+                    past_company_id=resolved.filters_applied["past_company"],
+                    geo_id=resolved.filters_applied["location"],
                     page=current_page,
                 )
 
@@ -522,28 +669,34 @@ def register_people_tools(mcp: FastMCP) -> None:
                     progress=30, total=100, message="Loading people search results"
                 )
 
-            await goto_and_check(page_obj, search_url)
-            try:
-                await page_obj.wait_for_selector("main", timeout=3000)
-            except Exception:
-                logger.debug("People search page missing <main> for %s", search_url)
-            await page_obj.evaluate("window.scrollBy(0, document.body.scrollHeight * 0.5)")
-
-            started_at = perf_counter()
-            people, partial = await _extract_people_results(
-                page=page_obj,
+            people, partial = await _run_people_extraction(
+                page_obj=page_obj,
+                url=search_url,
+                debug_label="People search",
                 card_group="people",
                 card_key="search_result_cards",
                 limit=safe_limit,
-                started_at=started_at,
-                default_current_company=current_result.display_name
-                if current_result
-                else current_company,
-                default_past_company=past_result.display_name if past_result else past_company,
-                match_current_company=current_company if normalized_match_mode == "broad" else None,
-                match_past_company=past_company if normalized_match_mode == "broad" else None,
-                match_location=location if normalized_match_mode == "broad" else None,
-                match_title_keyword=None if normalized_match_mode == "broad" else None,
+                defaults=_ExtractionDefaults(
+                    current_company=(
+                        resolved.current_company.display_name
+                        if resolved.current_company
+                        else current_company
+                    ),
+                    past_company=(
+                        resolved.past_company.display_name
+                        if resolved.past_company
+                        else past_company
+                    ),
+                ),
+                matches=(
+                    _MatchFilters(
+                        current_company=current_company,
+                        past_company=past_company,
+                        location=location,
+                    )
+                    if normalized_match_mode == "broad"
+                    else None
+                ),
             )
 
             if (
@@ -558,33 +711,26 @@ def register_people_tools(mcp: FastMCP) -> None:
                 )
                 fallback_url = _build_people_search_url(
                     keywords=fallback_keywords,
-                    geo_id=filters_applied["location"],
+                    geo_id=resolved.filters_applied["location"],
                     page=current_page,
                 )
-                await goto_and_check(page_obj, fallback_url)
-                try:
-                    await page_obj.wait_for_selector("main", timeout=3000)
-                except Exception:
-                    logger.debug(
-                        "Fallback people search page missing <main> for %s",
-                        fallback_url,
-                    )
-                await page_obj.evaluate(
-                    "window.scrollBy(0, document.body.scrollHeight * 0.5)"
-                )
-                started_at = perf_counter()
-                people, partial = await _extract_people_results(
-                    page=page_obj,
+                people, partial = await _run_people_extraction(
+                    page_obj=page_obj,
+                    url=fallback_url,
+                    debug_label="Fallback people search",
                     card_group="people",
                     card_key="search_result_cards",
                     limit=safe_limit,
-                    started_at=started_at,
-                    default_current_company=current_company,
-                    default_past_company=past_company,
-                    match_current_company=current_company,
-                    match_past_company=past_company,
-                    match_location=location,
-                    match_title_keyword=keywords,
+                    defaults=_ExtractionDefaults(
+                        current_company=current_company,
+                        past_company=past_company,
+                    ),
+                    matches=_MatchFilters(
+                        current_company=current_company,
+                        past_company=past_company,
+                        location=location,
+                        title_keyword=keywords,
+                    ),
                 )
                 if not people and keywords:
                     broadened_keywords = _build_fallback_keywords(
@@ -593,58 +739,43 @@ def register_people_tools(mcp: FastMCP) -> None:
                         location,
                     )
                     if broadened_keywords:
-                        warnings.append(
+                        resolved.warnings.append(
                             f"No exact matches for keywords='{keywords}'; broadened search to company/background filters only"
                         )
                         broadened_url = _build_people_search_url(
                             keywords=broadened_keywords,
-                            geo_id=filters_applied["location"],
+                            geo_id=resolved.filters_applied["location"],
                             page=current_page,
                         )
-                        await goto_and_check(page_obj, broadened_url)
-                        try:
-                            await page_obj.wait_for_selector("main", timeout=3000)
-                        except Exception:
-                            logger.debug(
-                                "Broadened people search page missing <main> for %s",
-                                broadened_url,
-                            )
-                        await page_obj.evaluate(
-                            "window.scrollBy(0, document.body.scrollHeight * 0.5)"
-                        )
-                        started_at = perf_counter()
-                        people, partial = await _extract_people_results(
-                            page=page_obj,
+                        people, partial = await _run_people_extraction(
+                            page_obj=page_obj,
+                            url=broadened_url,
+                            debug_label="Broadened people search",
                             card_group="people",
                             card_key="search_result_cards",
                             limit=safe_limit,
-                            started_at=started_at,
-                            default_current_company=current_company,
-                            default_past_company=past_company,
-                            match_current_company=current_company,
-                            match_past_company=past_company,
-                            match_location=location,
-                            match_title_keyword=None,
+                            defaults=_ExtractionDefaults(
+                                current_company=current_company,
+                                past_company=past_company,
+                            ),
+                            matches=_MatchFilters(
+                                current_company=current_company,
+                                past_company=past_company,
+                                location=location,
+                            ),
                         )
 
-            page_text = ""
-            try:
-                page_text = await page_obj.locator("body").inner_text(timeout=1000)
-            except Exception:
-                pass
-            total_results = _extract_total_count(page_text)
-
-            response = build_paginated_response(
+            total_results = await _extract_total_results_from_page(page_obj)
+            payload = _build_people_payload(
                 results=people,
                 page=current_page,
                 limit=safe_limit,
                 total=total_results,
                 partial=partial,
-                warnings=warnings or None,
+                warnings=resolved.warnings,
+                filters_applied=resolved.filters_applied,
+                extras={"match_mode": normalized_match_mode},
             )
-            payload = response.to_dict()
-            payload["filters_applied"] = filters_applied
-            payload["match_mode"] = normalized_match_mode
 
             if ctx:
                 await ctx.report_progress(
@@ -684,45 +815,12 @@ def register_people_tools(mcp: FastMCP) -> None:
                     progress=0, total=100, message="Resolving company filters"
                 )
 
-            async def _resolve_primary_company() -> ResolvedCompany | None:
-                return await resolve_company(company_name)
-
-            primary_task = asyncio.create_task(_resolve_primary_company())
-            past_task: asyncio.Task[ResolvedCompany | None] | None = None
-            if past_company:
-                past_task = asyncio.create_task(resolve_company(past_company))
-
-            try:
-                primary_result = await asyncio.wait_for(
-                    primary_task,
-                    timeout=_RESOLUTION_BUDGET_SECONDS,
+            primary_result, past_result, warnings, slug = (
+                await _resolve_company_people_filters(
+                    company_name=company_name,
+                    past_company=past_company,
                 )
-            except Exception:
-                primary_result = None
-
-            try:
-                past_result = (
-                    await asyncio.wait_for(past_task, timeout=_RESOLUTION_BUDGET_SECONDS)
-                    if past_task is not None
-                    else None
-                )
-            except Exception:
-                past_result = None
-
-            warnings: list[str] = []
-            slug = (
-                primary_result.company_slug
-                if primary_result
-                else quote_plus(company_name.strip().lower().replace(" ", "-"))
             )
-            if primary_result is None:
-                warnings.append(
-                    f"Could not resolve company_name='{company_name}'; using best-effort slug '{slug}'"
-                )
-            if past_company and past_result is None:
-                warnings.append(
-                    f"Could not resolve past_company='{past_company}'; search ran without that filter"
-                )
 
             browser = await get_or_create_browser()
             page_obj = browser.page
@@ -750,23 +848,21 @@ def register_people_tools(mcp: FastMCP) -> None:
                     progress=30, total=100, message="Loading company people page"
                 )
 
-            await goto_and_check(page_obj, url)
-            try:
-                await page_obj.wait_for_selector("main", timeout=3000)
-            except Exception:
-                logger.debug("Company people page missing <main> for %s", url)
-
-            started_at = perf_counter()
-            people, partial = await _extract_people_results(
-                page=page_obj,
+            people, partial = await _run_people_extraction(
+                page_obj=page_obj,
+                url=url,
+                debug_label="Company people search",
                 card_group="people" if use_people_search else "company_people",
                 card_key="search_result_cards" if use_people_search else "people_cards",
                 limit=safe_limit,
-                started_at=started_at,
-                default_current_company=primary_result.display_name
-                if primary_result
-                else company_name,
-                default_past_company=past_result.display_name if past_result else past_company,
+                defaults=_ExtractionDefaults(
+                    current_company=(
+                        primary_result.display_name if primary_result else company_name
+                    ),
+                    past_company=(
+                        past_result.display_name if past_result else past_company
+                    ),
+                ),
             )
 
             if not people:
@@ -778,52 +874,38 @@ def register_people_tools(mcp: FastMCP) -> None:
                     ),
                     page=current_page,
                 )
-                await goto_and_check(page_obj, fallback_url)
-                try:
-                    await page_obj.wait_for_selector("main", timeout=3000)
-                except Exception:
-                    logger.debug(
-                        "Fallback company people page missing <main> for %s",
-                        fallback_url,
-                    )
-                await page_obj.evaluate(
-                    "window.scrollBy(0, document.body.scrollHeight * 0.5)"
-                )
-                started_at = perf_counter()
-                people, partial = await _extract_people_results(
-                    page=page_obj,
+                people, partial = await _run_people_extraction(
+                    page_obj=page_obj,
+                    url=fallback_url,
+                    debug_label="Fallback company people search",
                     card_group="people",
                     card_key="search_result_cards",
                     limit=safe_limit,
-                    started_at=started_at,
-                    default_current_company=company_name,
-                    default_past_company=past_company,
-                    match_current_company=company_name,
-                    match_past_company=past_company,
-                    match_title_keyword=title_keyword,
+                    defaults=_ExtractionDefaults(
+                        current_company=company_name,
+                        past_company=past_company,
+                    ),
+                    matches=_MatchFilters(
+                        current_company=company_name,
+                        past_company=past_company,
+                        title_keyword=title_keyword,
+                    ),
                 )
 
-            page_text = ""
-            try:
-                page_text = await page_obj.locator("body").inner_text(timeout=1000)
-            except Exception:
-                pass
-            total_results = _extract_total_count(page_text)
-
-            response = build_paginated_response(
+            total_results = await _extract_total_results_from_page(page_obj)
+            payload = _build_people_payload(
                 results=people,
                 page=current_page,
                 limit=safe_limit,
                 total=total_results,
                 partial=partial,
-                warnings=warnings or None,
+                warnings=warnings,
+                filters_applied={
+                    "company_name": primary_result.company_id if primary_result else None,
+                    "past_company": past_result.company_id if past_result else None,
+                    "title_keyword": title_keyword,
+                },
             )
-            payload = response.to_dict()
-            payload["filters_applied"] = {
-                "company_name": primary_result.company_id if primary_result else None,
-                "past_company": past_result.company_id if past_result else None,
-                "title_keyword": title_keyword,
-            }
 
             if ctx:
                 await ctx.report_progress(
