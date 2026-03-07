@@ -10,14 +10,14 @@
   "packageRules": [
     {
       "description": "Managed by release workflow, not Renovate",
-      "matchPackageNames": ["stickerdaniel/linkedin-mcp-server"],
+      "matchPackageNames": ["iushv/linkedin-agent-mcp"],
       "matchManagers": ["docker-compose"],
       "enabled": false
     },
     {
       "description": "Group all CI dependencies (GitHub Actions + Docker)",
       "matchManagers": ["github-actions", "dockerfile", "docker-compose"],
-      "matchPackageNames": ["!stickerdaniel/linkedin-mcp-server"],
+      "matchPackageNames": ["!iushv/linkedin-agent-mcp"],
       "groupName": "CI dependencies"
     },
     {
