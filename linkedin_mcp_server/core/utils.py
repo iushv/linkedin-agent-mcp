@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 
 from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
@@ -81,6 +82,65 @@ async def detect_rate_limit(page: Page) -> None:
         raise
     except PlaywrightTimeoutError:
         pass
+
+
+async def detect_rate_limit_post_action(page: Page) -> None:
+    """Detect post-submit challenge pages and inline action throttling messages."""
+    await detect_rate_limit(page)
+
+    try:
+        challenge_markers = page.locator(
+            '[data-test-id*="challenge"], '
+            '[class*="captcha" i], '
+            'iframe[title*="security challenge" i]'
+        )
+        if await challenge_markers.count() > 0:
+            raise RateLimitError(
+                "LinkedIn challenge detected after action submission.",
+                suggested_wait_time=3600,
+            )
+    except RateLimitError:
+        raise
+    except Exception as e:
+        logger.debug("Error checking post-action challenge markers: %s", e)
+
+    try:
+        snack_text = (
+            await page.locator(
+                '[role="alert"], .artdeco-toast-item__message, .artdeco-inline-feedback__message'
+            ).first.inner_text(timeout=1500)
+        ).lower()
+        if any(
+            phrase in snack_text
+            for phrase in (
+                "try again later",
+                "too many",
+                "temporarily unavailable",
+                "restricted",
+            )
+        ):
+            raise RateLimitError(
+                "LinkedIn reported temporary action restriction.",
+                suggested_wait_time=1800,
+            )
+    except RateLimitError:
+        raise
+    except PlaywrightTimeoutError:
+        pass
+    except Exception as e:
+        logger.debug("Error checking post-action toast messages: %s", e)
+
+
+async def backoff_with_jitter(
+    attempt: int, base_seconds: int = 5, max_seconds: int = 300
+) -> float:
+    """Sleep with exponential backoff and jitter, returning the delay used."""
+    attempt = max(attempt, 0)
+    raw_delay = min(base_seconds * (2**attempt), max_seconds)
+    jitter = random.uniform(0, min(raw_delay * 0.25, 5))
+    delay = min(raw_delay + jitter, max_seconds)
+    await asyncio.sleep(delay)
+    return delay
 
 
 async def scroll_to_bottom(

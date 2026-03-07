@@ -145,3 +145,67 @@ class TestDetectRateLimit:
 
         mock_page.locator = MagicMock(side_effect=locator_side_effect)
         await detect_rate_limit(mock_page)
+
+
+# --- P1.5: detect_rate_limit_post_action + backoff_with_jitter ---
+
+
+class TestDetectRateLimitPostAction:
+    async def test_challenge_markers_raise(self, mock_page):
+        from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
+
+        # Set up a clean URL (no checkpoint/authwall)
+        mock_page.url = "https://www.linkedin.com/feed/"
+
+        # Captcha locator: no captcha
+        captcha_locator = MagicMock()
+        captcha_locator.count = AsyncMock(return_value=0)
+
+        # Main locator: page has <main> (skip body heuristic)
+        main_locator = MagicMock()
+        main_locator.count = AsyncMock(return_value=1)
+
+        # Challenge markers: present!
+        challenge_locator = MagicMock()
+        challenge_locator.count = AsyncMock(return_value=1)
+
+        # Snackbar: empty
+        snack_locator = MagicMock()
+        snack_locator.first = MagicMock()
+        snack_locator.first.inner_text = AsyncMock(return_value="")
+
+        def locator_side_effect(selector):
+            # The post-action challenge selector starts with '[data-test-id'
+            if "data-test-id" in selector:
+                return challenge_locator
+            if "captcha" in selector.lower():
+                return captcha_locator
+            if selector == "main":
+                return main_locator
+            if "alert" in selector or "toast" in selector:
+                return snack_locator
+            return MagicMock(count=AsyncMock(return_value=0))
+
+        mock_page.locator = MagicMock(side_effect=locator_side_effect)
+
+        with pytest.raises(RateLimitError, match="challenge detected"):
+            await detect_rate_limit_post_action(mock_page)
+
+
+class TestBackoffWithJitter:
+    async def test_bounds(self, monkeypatch):
+        from linkedin_mcp_server.core.utils import backoff_with_jitter
+
+        captured: list[float] = []
+
+        async def _fake_sleep(secs):
+            captured.append(secs)
+
+        monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+        monkeypatch.setattr("random.uniform", lambda a, b: b)  # max jitter
+
+        delay = await backoff_with_jitter(attempt=0, base_seconds=1, max_seconds=10)
+
+        assert len(captured) == 1
+        assert 1.0 <= captured[0] <= 10.0
+        assert delay == captured[0]

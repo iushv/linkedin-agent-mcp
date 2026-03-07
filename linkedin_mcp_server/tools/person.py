@@ -17,6 +17,7 @@ from linkedin_mcp_server.drivers.browser import (
 )
 from linkedin_mcp_server.error_handler import handle_tool_error
 from linkedin_mcp_server.scraping import LinkedInExtractor, parse_person_sections
+from linkedin_mcp_server.tools._common import extract_profile_slug
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ def register_person_tools(mcp: FastMCP) -> None:
         Get a specific person's LinkedIn profile.
 
         Args:
-            linkedin_username: LinkedIn username (e.g., "stickerdaniel", "williamhgates")
+            linkedin_username: LinkedIn username or profile URL/path
+                (e.g., "stickerdaniel", "/in/stickerdaniel/",
+                "https://www.linkedin.com/in/stickerdaniel/")
             ctx: FastMCP context for progress reporting
             sections: Comma-separated list of extra sections to scrape.
                 The main profile page is always included.
@@ -58,10 +61,11 @@ def register_person_tools(mcp: FastMCP) -> None:
             await ensure_authenticated()
 
             fields, unknown = parse_person_sections(sections)
+            profile_slug = extract_profile_slug(linkedin_username)
 
             logger.info(
                 "Scraping profile: %s (sections=%s)",
-                linkedin_username,
+                profile_slug,
                 sections,
             )
 
@@ -72,7 +76,7 @@ def register_person_tools(mcp: FastMCP) -> None:
                 progress=0, total=100, message="Starting person profile scrape"
             )
 
-            result = await extractor.scrape_person(linkedin_username, fields)
+            result = await extractor.scrape_person(profile_slug, fields)
 
             if unknown:
                 result["unknown_sections"] = unknown

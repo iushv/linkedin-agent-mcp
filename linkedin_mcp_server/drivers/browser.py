@@ -191,6 +191,19 @@ async def validate_session() -> bool:
         True if session is valid and user is logged in
     """
     browser = await get_or_create_browser()
+    if await is_logged_in(browser.page):
+        return True
+
+    # Recover from stale/interstitial page state by reloading a stable feed URL.
+    try:
+        await browser.page.goto(
+            "https://www.linkedin.com/feed/",
+            wait_until="domcontentloaded",
+        )
+    except Exception:
+        logger.debug("Session recovery navigation failed", exc_info=True)
+        return False
+
     return await is_logged_in(browser.page)
 
 

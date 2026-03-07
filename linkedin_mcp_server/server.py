@@ -13,8 +13,17 @@ from fastmcp import FastMCP
 
 from linkedin_mcp_server.drivers.browser import close_browser
 from linkedin_mcp_server.tools.company import register_company_tools
+from linkedin_mcp_server.tools.engagement import register_engagement_tools
+from linkedin_mcp_server.tools.feed import register_feed_tools
 from linkedin_mcp_server.tools.job import register_job_tools
+from linkedin_mcp_server.tools.messaging import register_messaging_tools
+from linkedin_mcp_server.tools.network import register_network_tools
+from linkedin_mcp_server.tools.people import register_people_tools
 from linkedin_mcp_server.tools.person import register_person_tools
+from linkedin_mcp_server.tools.post import register_post_tools
+from linkedin_mcp_server.tools.profile import register_profile_tools
+from linkedin_mcp_server.tools.recommendations import register_recommendation_tools
+from linkedin_mcp_server.tools.saved_jobs import register_saved_job_tools
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +45,15 @@ def create_mcp_server() -> FastMCP:
     register_person_tools(mcp)
     register_company_tools(mcp)
     register_job_tools(mcp)
+    register_people_tools(mcp)
+    register_post_tools(mcp)
+    register_saved_job_tools(mcp)
+    register_profile_tools(mcp)
+    register_recommendation_tools(mcp)
+    register_engagement_tools(mcp)
+    register_messaging_tools(mcp)
+    register_network_tools(mcp)
+    register_feed_tools(mcp)
 
     # Register session management tool
     @mcp.tool()

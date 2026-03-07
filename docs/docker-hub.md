@@ -7,8 +7,19 @@ A Model Context Protocol (MCP) server that connects AI assistants to LinkedIn. A
 - **Profile Access**: Get detailed LinkedIn profile information
 - **Company Profiles**: Extract comprehensive company data
 - **Job Details**: Retrieve job posting information
-- **Job Search**: Search for jobs with keywords and location filters
+- **Job Search**: Search for jobs with keywords and location filters, including structured `jobs` entries with `title`, `company`, `location`, `job_id`, and `url` when available
+- **People Search**: Find LinkedIn members by company, background, title keywords, and location
+- **Saved Jobs Queue**: Save jobs and read the current saved-jobs list
+- **Profile Job Search Controls**: Update headline, Open To Work, and profile skills with preview-first flows
 - **Company Posts**: Get recent posts from a company's LinkedIn feed
+
+## Structured Outputs
+
+- `search_jobs` preserves the raw `sections.search_results` text and adds a structured `jobs` list for downstream automation.
+- `search_people` and `get_company_people` return paginated `results` arrays with normalized person cards and resolver metadata. `search_people` also accepts `match_mode=auto|strict|broad` to control fallback broadening.
+- `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays.
+- Profile-write tools return standardized write envelopes with additive `data` for previews and confirmed changes.
+- `get_my_post_analytics` returns parsed post entries under `data.posts`, including `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 ## Quick Start
 

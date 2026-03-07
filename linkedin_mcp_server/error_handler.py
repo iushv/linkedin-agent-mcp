@@ -10,12 +10,16 @@ from typing import Any, Dict
 
 from linkedin_mcp_server.core.exceptions import (
     AuthenticationError,
+    ConcurrencyError,
     ElementNotFoundError,
+    InteractionError,
     LinkedInScraperException,
     NetworkError,
     ProfileNotFoundError,
+    QuotaExceededError,
     RateLimitError,
     ScrapingError,
+    SelectorError,
 )
 
 from linkedin_mcp_server.exceptions import (
@@ -88,6 +92,25 @@ def convert_exception_to_response(
             "resolution": f"LinkedIn rate limit detected. Wait {wait_time} seconds before trying again.",
         }
 
+    elif isinstance(exception, QuotaExceededError):
+        logger.warning("Quota exceeded in %s: %s", context, exception)
+        return {
+            "error": "quota_exceeded",
+            "message": str(exception),
+            "tool_name": exception.tool_name,
+            "limit": exception.limit,
+            "used": exception.used,
+            "resolution": "Wait until quota resets or increase quota in ~/.linkedin-mcp/config.json.",
+        }
+
+    elif isinstance(exception, ConcurrencyError):
+        logger.warning("Write concurrency issue in %s: %s", context, exception)
+        return {
+            "error": "concurrency_error",
+            "message": str(exception),
+            "resolution": "Another write operation is in progress. Retry shortly.",
+        }
+
     elif isinstance(exception, ProfileNotFoundError):
         logger.warning("Profile not found in %s: %s", context, exception)
         return {
@@ -102,6 +125,25 @@ def convert_exception_to_response(
             "error": "element_not_found",
             "message": str(exception),
             "resolution": "LinkedIn page structure may have changed. Please report this issue.",
+        }
+
+    elif isinstance(exception, SelectorError):
+        logger.warning("Selector resolution failed in %s: %s", context, exception)
+        return {
+            "error": "selector_error",
+            "message": str(exception),
+            "telemetry": exception.context,
+            "resolution": "LinkedIn UI may have changed. Check selector telemetry and update locator chains.",
+        }
+
+    elif isinstance(exception, InteractionError):
+        logger.warning("Interaction failed in %s: %s", context, exception)
+        return {
+            "error": "interaction_error",
+            "message": str(exception),
+            "action": exception.action,
+            "context": exception.context,
+            "resolution": "Retry with visible browser mode to inspect UI state.",
         }
 
     elif isinstance(exception, NetworkError):

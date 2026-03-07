@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import quote_plus
 
 from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -64,8 +64,22 @@ def strip_linkedin_noise(text: str) -> str:
 class LinkedInExtractor:
     """Extracts LinkedIn page content via navigate-scroll-innerText pattern."""
 
-    def __init__(self, page: Page):
+    def __init__(
+        self,
+        page: Page,
+        navigate_fn: Callable[[str], Awaitable[None]] | None = None,
+    ):
         self._page = page
+        self._navigate_fn = navigate_fn
+
+    async def _navigate_and_check(self, url: str) -> None:
+        """Navigate using a custom strategy when provided, else use default page.goto."""
+        if self._navigate_fn is not None:
+            await self._navigate_fn(url)
+            return
+
+        await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await detect_rate_limit(self._page)
 
     async def extract_page(self, url: str) -> str:
         """Navigate to a URL, scroll to load lazy content, and extract innerText.
@@ -96,8 +110,7 @@ class LinkedInExtractor:
 
     async def _extract_page_once(self, url: str) -> str:
         """Single attempt to navigate, scroll, and extract innerText."""
-        await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await detect_rate_limit(self._page)
+        await self._navigate_and_check(url)
 
         # Wait for main content to render
         try:
@@ -159,8 +172,7 @@ class LinkedInExtractor:
 
     async def _extract_overlay_once(self, url: str) -> str:
         """Single attempt to extract content from an overlay/modal page."""
-        await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await detect_rate_limit(self._page)
+        await self._navigate_and_check(url)
 
         # Wait for the dialog/modal to render (LinkedIn uses native <dialog>)
         try:
@@ -363,6 +375,10 @@ class LinkedInExtractor:
     ) -> dict[str, Any]:
         """Search for jobs and extract the results page.
 
+        Uses a lighter extraction path than the generic extract_page() to stay
+        within the 60s interactive ceiling: 2 scroll passes instead of 5, and
+        no soft-rate-limit retry.
+
         Returns:
             {url, sections: {name: text}, pages_visited, sections_requested}
         """
@@ -371,7 +387,26 @@ class LinkedInExtractor:
             params += f"&location={quote_plus(location)}"
 
         url = f"https://www.linkedin.com/jobs/search/?{params}"
-        text = await self.extract_page(url)
+
+        await self._navigate_and_check(url)
+
+        # Wait for main content — jobs pages hydrate via JS after domcontentloaded
+        try:
+            await self._page.wait_for_selector("main", timeout=5000)
+        except PlaywrightTimeoutError:
+            pass
+
+        await handle_modal_close(self._page)
+        # 2 scrolls (≈1s) instead of the generic 5 (≈2.5s) to save wall time
+        await scroll_to_bottom(self._page, pause_time=0.5, max_scrolls=2)
+
+        raw = await self._page.evaluate(
+            """() => {
+                const main = document.querySelector('main');
+                return main ? main.innerText : document.body.innerText;
+            }"""
+        )
+        text = strip_linkedin_noise(raw) if raw else ""
 
         sections: dict[str, str] = {}
         if text:

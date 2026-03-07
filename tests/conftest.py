@@ -1,16 +1,36 @@
 import pytest
 
 
+@pytest.fixture
+def isolate_safety(tmp_path, monkeypatch):
+    """Redirect safety state to tmp_path and reset session health + write lock."""
+    import linkedin_mcp_server.core.safety as safety
+
+    monkeypatch.setattr(safety, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(safety, "QUOTAS_FILE", tmp_path / "quotas.json")
+    monkeypatch.setattr(safety, "AUDIT_LOG_FILE", tmp_path / "audit.log")
+    monkeypatch.setattr(safety, "CONFIG_FILE", tmp_path / "config.json")
+
+    safety.reset_safety_state()
+
+    yield tmp_path
+
+    safety.reset_safety_state()
+
+
 @pytest.fixture(autouse=True)
 def reset_singletons():
     """Reset global state for test isolation."""
     from linkedin_mcp_server.config import reset_config
+    from linkedin_mcp_server.core.resolver import reset_resolver_state
     from linkedin_mcp_server.drivers.browser import reset_browser_for_testing
 
     reset_browser_for_testing()
+    reset_resolver_state()
     reset_config()
     yield
     reset_browser_for_testing()
+    reset_resolver_state()
     reset_config()
 
 

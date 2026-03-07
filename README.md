@@ -7,7 +7,7 @@
   <a href="https://github.com/stickerdaniel/linkedin-mcp-server/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-Apache%202.0-brightgreen?labelColor=32383f" alt="License"></a>
 </p>
 
-Through this LinkedIn MCP server, AI assistants like Claude can connect to your LinkedIn. Access profiles and companies, search for jobs, or get job details.
+Through this LinkedIn MCP server, AI assistants like Claude can connect to your LinkedIn. Access profiles and companies, search for jobs and people, manage saved jobs, update job-search profile settings, and inspect analytics.
 
 ## Installation Methods
 
@@ -45,10 +45,29 @@ What has Anthropic been posting about recently? https://www.linkedin.com/company
 | `get_company_posts` | Get recent posts from a company's LinkedIn feed | Working |
 | `search_jobs` | Search for jobs with keywords and location filters | Working |
 | `get_job_details` | Get detailed information about a specific job posting | Working |
+| `search_people` | Search LinkedIn members by keywords, current company, past company, and location; supports `match_mode=auto|strict|broad` | Working |
+| `get_company_people` | Find people at a target company with optional past-company and title filters | Working |
+| `save_job` | Save a LinkedIn job to the current account's queue | Working |
+| `get_saved_jobs` | List the current account's saved jobs with pagination metadata | Working |
+| `update_profile_headline` | Update the logged-in profile headline with preview support | Working |
+| `set_open_to_work` | Enable or disable Open To Work preferences with preview support | Working |
+| `add_profile_skills` | Add new skills to the logged-in profile with preview support | Working |
+| `set_featured_skills` | Best-effort featured-skill ordering flow | Experimental |
+| `get_job_recommendations` | Read LinkedIn's personalized job recommendations feed | Working |
 | `close_session` | Close browser session and clean up resources | Working |
 
 > [!IMPORTANT]
 > **Breaking change:** LinkedIn recently made some changes to prevent scraping. The newest version uses [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python) with persistent browser profiles instead of Playwright with session files. Old `session.json` files and `LINKEDIN_COOKIE` env vars are no longer supported. Run `--login` again to create a new profile + cookie file that can be mounted in docker. 02/2026
+
+## Structured Helper Fields
+
+Some tools return additive structured fields alongside the existing raw text output.
+
+- `search_jobs` keeps `sections.search_results` and also returns `jobs`, a structured list with `title`, `company`, `location`, `job_id`, and `url` when those values can be resolved from the current LinkedIn DOM.
+- `search_people` and `get_company_people` return paginated `results` arrays with normalized `PersonCard` fields and `filters_applied` / `warnings` metadata. `search_people.match_mode` controls whether the tool stays strict, broadens automatically, or runs a broad company/background search immediately.
+- `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays with normalized `JobCard` fields.
+- Profile-write tools (`update_profile_headline`, `set_open_to_work`, `add_profile_skills`, `set_featured_skills`) support preview-first flows via `dry_run` or `confirm=false` and return structured write envelopes with additive `data`.
+- `get_my_post_analytics` returns the standard read envelope and exposes parsed posts at `data.posts`. Each post object includes `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 <br/>
 <br/>
@@ -404,6 +423,44 @@ uv run -m linkedin_mcp_server
 
 ```bash
 uv run -m linkedin_mcp_server --transport streamable-http --host 127.0.0.1 --port 8000 --path /mcp
+```
+
+**Live smoke test:**
+
+```bash
+uv run -m linkedin_mcp_server --transport streamable-http --host 127.0.0.1 --port 8080 --path /mcp
+uv run python scripts/test_live_tools.py --url http://127.0.0.1:8080/mcp
+```
+
+Target specific tools, add pacing, or retry `read_conversation` after timeouts:
+
+```bash
+uv run python scripts/test_live_tools.py \
+  --url http://127.0.0.1:8080/mcp \
+  --read-only \
+  --tool get_conversations \
+  --tool read_conversation \
+  --read-sleep 3 \
+  --read-conversation-retries 2 \
+  --retry-backoff-seconds 8 \
+  --json-out output/live-smoke.json
+```
+
+Run only the write dry-run tools:
+
+```bash
+uv run python scripts/test_live_tools.py \
+  --url http://127.0.0.1:8080/mcp \
+  --write-only
+```
+
+Run a focused `read_conversation` check against a known thread id:
+
+```bash
+uv run python scripts/test_live_tools.py \
+  --url http://127.0.0.1:8080/mcp \
+  --focus-read-conversation \
+  --thread-id abc123
 ```
 
 **Claude Desktop:**

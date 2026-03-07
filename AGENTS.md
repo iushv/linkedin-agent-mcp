@@ -48,8 +48,12 @@ This is a **LinkedIn MCP (Model Context Protocol) Server** that enables AI assis
 **Tool Categories:**
 
 - **Person Tools** (`tools/person.py`) - Profile scraping with explicit section selection
+- **People Search Tools** (`tools/people.py`) - Member discovery for warm-intro workflows
 - **Company Tools** (`tools/company.py`) - Company profile and posts extraction
 - **Job Tools** (`tools/job.py`) - Job posting details and search functionality
+- **Saved Job Tools** (`tools/saved_jobs.py`) - Saved-jobs queue management
+- **Profile Tools** (`tools/profile.py`) - Headline, Open To Work, and skill updates
+- **Recommendation Tools** (`tools/recommendations.py`) - Personalized job recommendations
 
 **Available MCP Tools:**
 
@@ -60,11 +64,28 @@ This is a **LinkedIn MCP (Model Context Protocol) Server** that enables AI assis
 | `get_company_posts` | Get recent posts from company feed |
 | `get_job_details` | Get job posting details |
 | `search_jobs` | Search jobs by keywords and location |
+| `search_people` | Search LinkedIn members by keywords and resolved filters (`match_mode=auto|strict|broad`) |
+| `get_company_people` | Find people at a company with optional alumni/title filters |
+| `save_job` | Save a LinkedIn job posting |
+| `get_saved_jobs` | List the current account's saved jobs |
+| `update_profile_headline` | Update the logged-in profile headline |
+| `set_open_to_work` | Configure Open To Work preferences |
+| `add_profile_skills` | Add skills to the logged-in profile |
+| `set_featured_skills` | Best-effort featured skill ordering |
+| `get_job_recommendations` | Get personalized job recommendations |
 | `close_session` | Close browser session and clean up resources |
 
 **Tool Return Format:**
 
-All scraping tools return: `{url, sections: {name: raw_text}, pages_visited, sections_requested}`
+Legacy extractor tools return: `{url, sections: {name: raw_text}, pages_visited, sections_requested}`
+
+Additive structured fields:
+
+- `search_jobs` also returns `jobs`, a structured list with `title`, `company`, `location`, `job_id`, and `url` when those fields can be resolved from the LinkedIn DOM.
+- `search_people` and `get_company_people` return paginated `results` arrays with normalized person-card fields plus `filters_applied` and `warnings`. `search_people.match_mode` controls how aggressively the tool broadens when exact matches are sparse.
+- `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays with normalized job-card fields.
+- Profile-write tools return standardized write envelopes and surface preview/change details under `data`.
+- `get_my_post_analytics` returns parsed post entries under `data.posts` with `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 **Scraping Architecture (`scraping/`):**
 
