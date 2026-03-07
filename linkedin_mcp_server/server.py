@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastMCP) -> AsyncIterator[None]:
     """Manage server lifecycle - cleanup browser on shutdown."""
-    logger.info("LinkedIn MCP Server starting...")
+    logger.info("LinkedIn Agent MCP starting...")
     yield
-    logger.info("LinkedIn MCP Server shutting down...")
+    logger.info("LinkedIn Agent MCP shutting down...")
     await close_browser()
 
 

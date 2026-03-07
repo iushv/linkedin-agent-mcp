@@ -1,4 +1,4 @@
-# LinkedIn MCP Server
+# LinkedIn Agent MCP
 
 A Model Context Protocol (MCP) server that connects AI assistants to LinkedIn. Access profiles, companies, and job postings through a Docker container.
 

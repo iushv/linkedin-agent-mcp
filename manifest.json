@@ -1,10 +1,10 @@
 {
   "dxt_version": "0.1",
   "name": "linkedin-mcp-server",
-  "display_name": "LinkedIn MCP Server",
+  "display_name": "LinkedIn Agent MCP",
   "version": "4.0.0",
-  "description": "Connect Claude to LinkedIn for profiles, companies, and job details",
-  "long_description": "# LinkedIn MCP Server\n\nConnect Claude to your LinkedIn account. Access profiles, companies, and job postings through a Docker container on your machine.\n\n## Features\n- **Profile Access**: Get detailed LinkedIn profile information including work history, education, and skills\n- **Company Profiles**: Extract comprehensive company information and details\n- **Job Details**: Retrieve job posting information from LinkedIn URLs\n- **Job Search**: Search for jobs with keywords and location filters\n\n## First-Time Setup\n\n### 1. Pre-pull Docker Image (Required)\nRun this command first to avoid connection timeouts:\n```\ndocker pull iushv/linkedin-agent-mcp:4.0.0",
+  "description": "Connect Claude to LinkedIn for automation, outreach, profiles, companies, jobs, and analytics",
+  "long_description": "# LinkedIn Agent MCP\n\nConnect Claude to your LinkedIn account. Access profiles, companies, job postings, people search, saved jobs, and profile automation through a Docker container on your machine.\n\n## Features\n- **Profile Access**: Get detailed LinkedIn profile information including work history, education, and skills\n- **Company Profiles**: Extract comprehensive company information and details\n- **Job Details**: Retrieve job posting information from LinkedIn URLs\n- **Job Search**: Search for jobs and people with structured outputs and pagination\n- **Automation**: Manage saved jobs and profile job-search settings\n\n## First-Time Setup\n\n### 1. Pre-pull Docker Image (Required)\nRun this command first to avoid connection timeouts:\n```\ndocker pull iushv/linkedin-agent-mcp:4.0.0",
   "author": {
     "name": "Ayush Kumar",
     "url": "https://github.com/iushv/linkedin-agent-mcp"

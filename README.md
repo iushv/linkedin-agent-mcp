@@ -1,4 +1,4 @@
-# LinkedIn MCP Server
+# LinkedIn Agent MCP
 
 <p align="left">
   <a href="https://pypi.org/project/linkedin-scraper-mcp/" target="_blank"><img src="https://img.shields.io/pypi/v/linkedin-scraper-mcp?color=blue" alt="PyPI"></a>
@@ -7,7 +7,7 @@
   <a href="https://github.com/iushv/linkedin-agent-mcp/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-Apache%202.0-brightgreen?labelColor=32383f" alt="License"></a>
 </p>
 
-Through this LinkedIn MCP server, AI assistants like Claude can connect to your LinkedIn. Access profiles and companies, search for jobs and people, manage saved jobs, update job-search profile settings, and inspect analytics.
+Through this LinkedIn Agent MCP, AI assistants like Claude can connect to your LinkedIn. Access profiles and companies, search for jobs and people, manage saved jobs, update job-search profile settings, and inspect analytics.
 
 ## Attribution
 
@@ -375,7 +375,7 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 ```bash
 # 1. Clone repository
 git clone https://github.com/iushv/linkedin-agent-mcp
-cd linkedin-mcp-server
+cd linkedin-agent-mcp
 
 # 2. Install UV package manager (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -474,7 +474,7 @@ uv run python scripts/test_live_tools.py \
   "mcpServers": {
     "linkedin": {
       "command": "uv",
-      "args": ["--directory", "/path/to/linkedin-mcp-server", "run", "-m", "linkedin_mcp_server"]
+      "args": ["--directory", "/path/to/linkedin-agent-mcp", "run", "-m", "linkedin_mcp_server"]
     }
   }
 }

@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Docker Commands:**
 
-- Build: `docker build -t linkedin-mcp-server .`
+- Build: `docker build -t linkedin-agent-mcp .`
 - Login: Use uvx locally first: `uvx linkedin-scraper-mcp --login`
 
 ## Architecture Overview

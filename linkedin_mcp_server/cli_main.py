@@ -1,5 +1,5 @@
 """
-LinkedIn MCP Server - Main CLI application entry point.
+LinkedIn Agent MCP - Main CLI application entry point.
 
 Implements a simplified two-phase startup:
 1. Authentication Check - Verify browser profile is available
@@ -66,7 +66,7 @@ def clear_profile_and_exit() -> None:
     )
 
     version = get_version()
-    logger.info(f"LinkedIn MCP Server v{version} - Profile Clear mode")
+    logger.info(f"LinkedIn Agent MCP v{version} - Profile Clear mode")
 
     profile_dir = get_profile_dir()
 
@@ -107,7 +107,7 @@ def get_profile_and_exit() -> None:
     )
 
     version = get_version()
-    logger.info(f"LinkedIn MCP Server v{version} - Session Creation mode")
+    logger.info(f"LinkedIn Agent MCP v{version} - Session Creation mode")
 
     user_data_dir = config.browser.user_data_dir
     success = run_profile_creation(user_data_dir)
@@ -125,7 +125,7 @@ def profile_info_and_exit() -> None:
     )
 
     version = get_version()
-    logger.info(f"LinkedIn MCP Server v{version} - Session Info mode")
+    logger.info(f"LinkedIn Agent MCP v{version} - Session Info mode")
 
     # Check if profile directory exists first
     profile_dir = get_profile_dir()
@@ -243,10 +243,10 @@ def main() -> None:
 
     # Print banner in interactive mode
     if config.is_interactive:
-        print(f"🔗 LinkedIn MCP Server v{version} 🔗")
+        print(f"🔗 LinkedIn Agent MCP v{version} 🔗")
         print("=" * 40)
 
-    logger.info(f"LinkedIn MCP Server v{version}")
+    logger.info(f"LinkedIn Agent MCP v{version}")
 
     # Set headless mode from config
     set_headless(config.browser.headless)
