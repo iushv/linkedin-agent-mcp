@@ -317,10 +317,7 @@ class TestJobTools:
             "url": "https://www.linkedin.com/jobs/search/?keywords=data+engineer",
             "sections": {
                 "search_results": (
-                    "Data Engineer\n"
-                    "Acme Pte Ltd\n"
-                    "Singapore\n"
-                    "2 days ago\n"
+                    "Data Engineer\nAcme Pte Ltd\nSingapore\n2 days ago\n"
                 )
             },
             "pages_visited": [

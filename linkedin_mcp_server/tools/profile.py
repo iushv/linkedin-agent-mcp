@@ -9,7 +9,11 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from linkedin_mcp_server.core.exceptions import InteractionError
-from linkedin_mcp_server.core.interactions import click_element, type_text, wait_for_modal
+from linkedin_mcp_server.core.interactions import (
+    click_element,
+    type_text,
+    wait_for_modal,
+)
 from linkedin_mcp_server.core.responses import write_dry_run
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
@@ -79,7 +83,9 @@ async def _preview_open_to_work(page: Any, payload: dict[str, Any]) -> dict[str,
     }
 
 
-def _dry_run_with_data(action: str, description: str, data: dict[str, Any]) -> dict[str, Any]:
+def _dry_run_with_data(
+    action: str, description: str, data: dict[str, Any]
+) -> dict[str, Any]:
     return write_dry_run(action, description, data=data)
 
 
@@ -190,16 +196,24 @@ def register_profile_tools(mcp: FastMCP) -> None:
 
             if enabled:
                 if job_titles:
-                    title_input = await SELECTORS["profile"]["open_to_work_job_title"].find(page)
+                    title_input = await SELECTORS["profile"][
+                        "open_to_work_job_title"
+                    ].find(page)
                     await title_input.fill(job_titles[0])
                 if locations:
-                    location_input = await SELECTORS["profile"]["open_to_work_location"].find(page)
+                    location_input = await SELECTORS["profile"][
+                        "open_to_work_location"
+                    ].find(page)
                     await location_input.fill(locations[0])
 
                 if visibility.strip().lower() == "recruiters_only":
-                    await click_element(page, SELECTORS["profile"]["open_to_work_recruiters_only"])
+                    await click_element(
+                        page, SELECTORS["profile"]["open_to_work_recruiters_only"]
+                    )
                 else:
-                    await click_element(page, SELECTORS["profile"]["open_to_work_public"])
+                    await click_element(
+                        page, SELECTORS["profile"]["open_to_work_public"]
+                    )
             else:
                 await click_element(page, SELECTORS["profile"]["open_to_work_remove"])
 
@@ -306,7 +320,9 @@ def register_profile_tools(mcp: FastMCP) -> None:
         """Best-effort featured-skills ordering tool."""
         requested = [skill.strip() for skill in featured_skills if skill.strip()]
         if not requested:
-            raise ValueError("featured_skills must contain at least one non-empty value")
+            raise ValueError(
+                "featured_skills must contain at least one non-empty value"
+            )
 
         browser = await get_or_create_browser()
         page = browser.page
@@ -328,7 +344,11 @@ def register_profile_tools(mcp: FastMCP) -> None:
             await click_element(page, SELECTORS["profile"]["featured_skills_button"])
             await wait_for_modal(page)
 
-            missing = [skill for skill in requested if await page.get_by_text(skill).count() == 0]
+            missing = [
+                skill
+                for skill in requested
+                if await page.get_by_text(skill).count() == 0
+            ]
             if missing:
                 raise InteractionError(
                     "Featured skills reorder could not be completed.",

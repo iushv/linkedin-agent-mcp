@@ -202,7 +202,9 @@ async def check_quota(tool_name: str) -> dict[str, int | None]:
     limit = await _resolve_limit(tool_name)
     if limit is None:
         if session_limit is not None:
-            _session_quota_counts[tool_name] = int(_session_quota_counts.get(tool_name, 0)) + 1
+            _session_quota_counts[tool_name] = (
+                int(_session_quota_counts.get(tool_name, 0)) + 1
+            )
         return {"limit": None, "used": None, "remaining": None}
 
     async with _state_lock:
@@ -224,7 +226,9 @@ async def check_quota(tool_name: str) -> dict[str, int | None]:
         await _write_quota_state(state)
 
     if session_limit is not None:
-        _session_quota_counts[tool_name] = int(_session_quota_counts.get(tool_name, 0)) + 1
+        _session_quota_counts[tool_name] = (
+            int(_session_quota_counts.get(tool_name, 0)) + 1
+        )
 
     return {"limit": limit, "used": used, "remaining": max(limit - used, 0)}
 

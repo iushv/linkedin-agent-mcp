@@ -230,7 +230,8 @@ class TestClickAndConfirm:
         page = MagicMock()
 
         with patch(
-            "linkedin_mcp_server.core.interactions.click_element", new_callable=AsyncMock
+            "linkedin_mcp_server.core.interactions.click_element",
+            new_callable=AsyncMock,
         ) as mock_click:
             await click_and_confirm(page, click_chain, confirm_chain, timeout=500)
 

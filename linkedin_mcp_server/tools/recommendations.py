@@ -123,7 +123,9 @@ def _parse_job_recommendations_text(
             idx += 1
             continue
 
-        while next_idx < len(filtered) and _ANCILLARY_JOB_LINE_RE.search(filtered[next_idx]):
+        while next_idx < len(filtered) and _ANCILLARY_JOB_LINE_RE.search(
+            filtered[next_idx]
+        ):
             next_idx += 1
 
         if next_idx >= len(filtered):
@@ -138,7 +140,10 @@ def _parse_job_recommendations_text(
                 location = candidate
                 next_idx += 1
                 break
-            if candidate.lower() in _RECOMMENDATION_NOISE or _ANCILLARY_JOB_LINE_RE.search(candidate):
+            if (
+                candidate.lower() in _RECOMMENDATION_NOISE
+                or _ANCILLARY_JOB_LINE_RE.search(candidate)
+            ):
                 next_idx += 1
                 continue
             break
@@ -207,14 +212,18 @@ def register_recommendation_tools(mcp: FastMCP) -> None:
                 rows = await SELECTORS["jobs"]["recommendation_cards"].resolve(page_obj)
                 for idx in range(await rows.count()):
                     row = rows.nth(idx)
-                    title = await _first_locator_text(row, _RECOMMENDATION_TITLE_SELECTORS)
+                    title = await _first_locator_text(
+                        row, _RECOMMENDATION_TITLE_SELECTORS
+                    )
                     company = await _first_locator_text(
                         row, _RECOMMENDATION_COMPANY_SELECTORS
                     )
                     location_value = await _first_locator_text(
                         row, _RECOMMENDATION_LOCATION_SELECTORS
                     )
-                    href = await _first_locator_href(row, _RECOMMENDATION_LINK_SELECTORS)
+                    href = await _first_locator_href(
+                        row, _RECOMMENDATION_LINK_SELECTORS
+                    )
                     job_url = _normalize_job_url(href)
                     job = _build_job_result(
                         title=title,

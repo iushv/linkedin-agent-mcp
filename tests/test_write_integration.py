@@ -67,9 +67,7 @@ class TestCreatePostGoldenPath:
             MockPageBuilder()
             .on_goto("https://www.linkedin.com/feed/")
             .with_modal(visible=True)
-            .with_post_url(
-                "https://www.linkedin.com/feed/update/urn:li:activity:123/"
-            )
+            .with_post_url("https://www.linkedin.com/feed/update/urn:li:activity:123/")
             .build()
         )
 
@@ -78,8 +76,16 @@ class TestCreatePostGoldenPath:
         register_post_tools(mcp)
 
         with (
-            patch(f"{_POST}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_POST}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.type_text", new_callable=AsyncMock),
             patch(f"{_POST}.wait_for_modal", new_callable=AsyncMock),
@@ -147,13 +153,28 @@ class TestReactToPostGoldenPath:
         mock_like_locator.first = mock_like_locator
 
         with (
-            patch(f"{_ENGAGE}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_ENGAGE}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_ENGAGE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_ENGAGE}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_ENGAGE}.click_element", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
-            patch(f"{_ENGAGE}.SELECTORS", {
-                "engagement": {"like": MagicMock(find=AsyncMock(return_value=mock_like_locator))},
-            }),
+            patch(
+                f"{_ENGAGE}.SELECTORS",
+                {
+                    "engagement": {
+                        "like": MagicMock(
+                            find=AsyncMock(return_value=mock_like_locator)
+                        )
+                    },
+                },
+            ),
         ):
             tool_fn = await get_tool_fn(mcp, "react_to_post")
             result = await tool_fn(
@@ -181,9 +202,7 @@ class TestSendMessageGoldenPath:
         from linkedin_mcp_server.tools.messaging import register_messaging_tools
 
         page = (
-            MockPageBuilder()
-            .on_goto("https://www.linkedin.com/in/testuser/")
-            .build()
+            MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
         )
         page.url = "https://www.linkedin.com/messaging/thread/abc123/"
 
@@ -192,8 +211,16 @@ class TestSendMessageGoldenPath:
         register_messaging_tools(mcp)
 
         with (
-            patch(f"{_MSG}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_MSG}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_MSG}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_MSG}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_MSG}.click_element", new_callable=AsyncMock),
             patch(f"{_MSG}.type_text", new_callable=AsyncMock),
             patch(f"{_MSG}.detect_rate_limit_post_action", new_callable=AsyncMock),
@@ -236,8 +263,16 @@ class TestSendConnectionGoldenPath:
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_NET}.click_element", new_callable=AsyncMock),
             patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
@@ -267,7 +302,10 @@ class TestCreatePoll:
         register_post_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "create_poll")
         result = await tool_fn(
-            question="Test?", options=["A", "B"], confirm=True, dry_run=True,
+            question="Test?",
+            options=["A", "B"],
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -279,7 +317,9 @@ class TestCreatePoll:
         duration_locator = MagicMock()
         duration_locator.select_option = AsyncMock()
 
-        poll_q_chain = MagicMock(find=AsyncMock(return_value=MagicMock(fill=AsyncMock())))
+        poll_q_chain = MagicMock(
+            find=AsyncMock(return_value=MagicMock(fill=AsyncMock()))
+        )
         duration_chain = MagicMock(find=AsyncMock(return_value=duration_locator))
 
         selectors = {
@@ -288,8 +328,22 @@ class TestCreatePoll:
                 "text_editor": MagicMock(),
                 "poll_button": MagicMock(),
                 "poll_question": poll_q_chain,
-                "poll_option_1": MagicMock(find=AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=1), first=MagicMock(fill=AsyncMock())))),
-                "poll_option_2": MagicMock(find=AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=1), first=MagicMock(fill=AsyncMock())))),
+                "poll_option_1": MagicMock(
+                    find=AsyncMock(
+                        return_value=MagicMock(
+                            count=AsyncMock(return_value=1),
+                            first=MagicMock(fill=AsyncMock()),
+                        )
+                    )
+                ),
+                "poll_option_2": MagicMock(
+                    find=AsyncMock(
+                        return_value=MagicMock(
+                            count=AsyncMock(return_value=1),
+                            first=MagicMock(fill=AsyncMock()),
+                        )
+                    )
+                ),
                 "duration_dropdown": duration_chain,
                 "submit": MagicMock(),
             },
@@ -302,8 +356,16 @@ class TestCreatePoll:
         register_post_tools(mcp)
 
         with (
-            patch(f"{_POST}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_POST}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.type_text", new_callable=AsyncMock),
             patch(f"{_POST}.wait_for_modal", new_callable=AsyncMock),
@@ -313,8 +375,10 @@ class TestCreatePoll:
         ):
             tool_fn = await get_tool_fn(mcp, "create_poll")
             result = await tool_fn(
-                question="Test?", options=["A", "B"],
-                confirm=True, dry_run=False,
+                question="Test?",
+                options=["A", "B"],
+                confirm=True,
+                dry_run=False,
             )
 
         assert result["status"] == "success"
@@ -337,7 +401,8 @@ class TestDeletePost:
         tool_fn = await get_tool_fn(mcp, "delete_post")
         result = await tool_fn(
             post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-            confirm=True, dry_run=True,
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -346,15 +411,27 @@ class TestDeletePost:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.post import register_post_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_post_tools(mcp)
 
         with (
-            patch(f"{_POST}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_POST}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.click_and_confirm", new_callable=AsyncMock),
             patch(f"{_POST}.detect_rate_limit_post_action", new_callable=AsyncMock),
@@ -362,7 +439,8 @@ class TestDeletePost:
             tool_fn = await get_tool_fn(mcp, "delete_post")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                confirm=True, dry_run=False,
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -378,22 +456,35 @@ class TestRepost:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.post import register_post_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_post_tools(mcp)
 
         with (
-            patch(f"{_POST}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_POST}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "repost")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                confirm=True, dry_run=False,
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -402,15 +493,27 @@ class TestRepost:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.post import register_post_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_post_tools(mcp)
 
         with (
-            patch(f"{_POST}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_POST}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.type_text", new_callable=AsyncMock),
             patch(f"{_POST}.detect_rate_limit_post_action", new_callable=AsyncMock),
@@ -419,7 +522,8 @@ class TestRepost:
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
                 comment="Great post!",
-                confirm=True, dry_run=False,
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -440,7 +544,9 @@ class TestCommentOnPost:
         tool_fn = await get_tool_fn(mcp, "comment_on_post")
         result = await tool_fn(
             post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-            text="Great!", confirm=True, dry_run=True,
+            text="Great!",
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -449,15 +555,27 @@ class TestCommentOnPost:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.engagement import register_engagement_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_engagement_tools(mcp)
 
         with (
-            patch(f"{_ENGAGE}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_ENGAGE}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_ENGAGE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_ENGAGE}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_ENGAGE}.click_element", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.type_text", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
@@ -465,7 +583,9 @@ class TestCommentOnPost:
             tool_fn = await get_tool_fn(mcp, "comment_on_post")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                text="Great!", confirm=True, dry_run=False,
+                text="Great!",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -513,23 +633,39 @@ class TestReplyToComment:
 
         comment.locator = _locator
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
-        page.locator = MagicMock(return_value=MagicMock(nth=MagicMock(return_value=comment)))
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
+        page.locator = MagicMock(
+            return_value=MagicMock(nth=MagicMock(return_value=comment))
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_engagement_tools(mcp)
 
         with (
-            patch(f"{_ENGAGE}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_ENGAGE}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_ENGAGE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_ENGAGE}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "reply_to_comment")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                comment_index=0, text="Thanks!",
-                confirm=True, dry_run=False,
+                comment_index=0,
+                text="Thanks!",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -539,22 +675,36 @@ class TestReplyToComment:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.engagement import register_engagement_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_engagement_tools(mcp)
 
         with (
-            patch(f"{_ENGAGE}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_ENGAGE}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_ENGAGE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_ENGAGE}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "reply_to_comment")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                comment_index=-1, text="bad",
-                confirm=True, dry_run=False,
+                comment_index=-1,
+                text="bad",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "error"
         assert result["error_code"] == "validation_error"
@@ -576,7 +726,9 @@ class TestLikeComment:
         tool_fn = await get_tool_fn(mcp, "like_comment")
         result = await tool_fn(
             post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-            comment_index=0, confirm=True, dry_run=True,
+            comment_index=0,
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -591,24 +743,42 @@ class TestLikeComment:
 
         comment = MagicMock()
         comment.scroll_into_view_if_needed = AsyncMock()
-        comment.locator = MagicMock(return_value=MagicMock(first=like_btn, count=like_btn.count))
+        comment.locator = MagicMock(
+            return_value=MagicMock(first=like_btn, count=like_btn.count)
+        )
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/").build()
-        page.locator = MagicMock(return_value=MagicMock(nth=MagicMock(return_value=comment)))
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+            .build()
+        )
+        page.locator = MagicMock(
+            return_value=MagicMock(nth=MagicMock(return_value=comment))
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_engagement_tools(mcp)
 
         with (
-            patch(f"{_ENGAGE}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_ENGAGE}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_ENGAGE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_ENGAGE}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "like_comment")
             result = await tool_fn(
                 post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
-                comment_index=0, confirm=True, dry_run=False,
+                comment_index=0,
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -628,7 +798,9 @@ class TestFollowPerson:
         register_network_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "follow_person")
         result = await tool_fn(
-            profile_url="testuser", confirm=True, dry_run=True,
+            profile_url="testuser",
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -641,7 +813,9 @@ class TestFollowPerson:
         follow_btn.count = AsyncMock(return_value=1)
         follow_btn.first = MagicMock(click=AsyncMock())
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
+        page = (
+            MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
+        )
         page.get_by_role = MagicMock(return_value=follow_btn)
         browser = _make_browser(page)
 
@@ -649,13 +823,23 @@ class TestFollowPerson:
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "follow_person")
             result = await tool_fn(
-                profile_url="testuser", confirm=True, dry_run=False,
+                profile_url="testuser",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -680,7 +864,9 @@ class TestRespondToInvitation:
         anchor.get_attribute = AsyncMock(return_value="/in/testuser")
 
         row = MagicMock()
-        row.locator = MagicMock(return_value=MagicMock(first=anchor, count=anchor.count))
+        row.locator = MagicMock(
+            return_value=MagicMock(first=anchor, count=anchor.count)
+        )
         row.get_by_role = MagicMock(return_value=accept_btn)
 
         loc = MagicMock()
@@ -689,22 +875,36 @@ class TestRespondToInvitation:
 
         chain_mock = MagicMock(resolve=AsyncMock(return_value=loc))
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/mynetwork/invitation-manager/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/mynetwork/invitation-manager/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
             patch(f"{_NET}.SELECTORS", {"network": {"invitation_rows": chain_mock}}),
         ):
             tool_fn = await get_tool_fn(mcp, "respond_to_invitation")
             result = await tool_fn(
-                profile_url="testuser", action="accept",
-                confirm=True, dry_run=False,
+                profile_url="testuser",
+                action="accept",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
 
@@ -718,8 +918,10 @@ class TestRespondToInvitation:
         tool_fn = await get_tool_fn(mcp, "respond_to_invitation")
         # Test via dry_run to verify decline action is accepted
         result = await tool_fn(
-            profile_url="testuser", action="decline",
-            confirm=True, dry_run=True,
+            profile_url="testuser",
+            action="decline",
+            confirm=True,
+            dry_run=True,
         )
         assert result["status"] == "dry_run"
 
@@ -729,20 +931,34 @@ class TestRespondToInvitation:
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.network import register_network_tools
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/mynetwork/invitation-manager/").build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/mynetwork/invitation-manager/")
+            .build()
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
         ):
             tool_fn = await get_tool_fn(mcp, "respond_to_invitation")
             result = await tool_fn(
-                profile_url="testuser", action="xyz",
-                confirm=True, dry_run=False,
+                profile_url="testuser",
+                action="xyz",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "error"
         assert result["error_code"] == "validation_error"
@@ -769,26 +985,42 @@ class TestConnectionRequestFallback:
         menu_connect.count = AsyncMock(return_value=1)
         menu_connect.first = MagicMock(click=AsyncMock())
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
-        page.get_by_role = MagicMock(side_effect=lambda role, name=None, **kw: (
-            connect_btn if role == "button" and name == "Connect"
-            else menu_connect if role == "menuitem" and name == "Connect"
-            else MagicMock(count=AsyncMock(return_value=0))
-        ))
+        page = (
+            MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
+        )
+        page.get_by_role = MagicMock(
+            side_effect=lambda role, name=None, **kw: (
+                connect_btn
+                if role == "button" and name == "Connect"
+                else menu_connect
+                if role == "menuitem" and name == "Connect"
+                else MagicMock(count=AsyncMock(return_value=0))
+            )
+        )
         browser = _make_browser(page)
 
         mcp = FastMCP("test")
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_NET}.click_element", new_callable=AsyncMock),
             patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "send_connection_request")
             result = await tool_fn(
-                profile_url="testuser", confirm=True, dry_run=False,
+                profile_url="testuser",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"
         menu_connect.first.click.assert_awaited_once()
@@ -810,12 +1042,18 @@ class TestFollowPersonFallback:
         menu_follow.count = AsyncMock(return_value=1)
         menu_follow.first = MagicMock(click=AsyncMock())
 
-        page = MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
-        page.get_by_role = MagicMock(side_effect=lambda role, name=None, **kw: (
-            follow_btn if role == "button" and name == "Follow"
-            else menu_follow if role == "menuitem" and name == "Follow"
-            else MagicMock(count=AsyncMock(return_value=0))
-        ))
+        page = (
+            MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
+        )
+        page.get_by_role = MagicMock(
+            side_effect=lambda role, name=None, **kw: (
+                follow_btn
+                if role == "button" and name == "Follow"
+                else menu_follow
+                if role == "menuitem" and name == "Follow"
+                else MagicMock(count=AsyncMock(return_value=0))
+            )
+        )
         page.get_by_text = MagicMock(return_value=menu_follow)
         browser = _make_browser(page)
 
@@ -823,13 +1061,23 @@ class TestFollowPersonFallback:
         register_network_tools(mcp)
 
         with (
-            patch(f"{_NET}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
-            patch(f"{_NET}.goto_and_check", new_callable=AsyncMock, side_effect=_goto_and_check),
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
             patch(f"{_NET}.click_element", new_callable=AsyncMock),
             patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "follow_person")
             result = await tool_fn(
-                profile_url="testuser", confirm=True, dry_run=False,
+                profile_url="testuser",
+                confirm=True,
+                dry_run=False,
             )
         assert result["status"] == "success"

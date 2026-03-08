@@ -33,7 +33,9 @@ def _patch_auth():
         yield
 
 
-def _headline_selectors(current: str = "Data Consultant @ EXL") -> dict[str, dict[str, Any]]:
+def _headline_selectors(
+    current: str = "Data Consultant @ EXL",
+) -> dict[str, dict[str, Any]]:
     headline_locator = MagicMock()
     headline_locator.inner_text = AsyncMock(return_value=current)
 
@@ -77,7 +79,11 @@ class TestUpdateProfileHeadline:
         register_profile_tools(mcp)
 
         with (
-            patch(f"{_PROFILE}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_PROFILE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_PROFILE}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_PROFILE}.SELECTORS", _headline_selectors()),
         ):
@@ -102,7 +108,11 @@ class TestUpdateProfileHeadline:
         register_profile_tools(mcp)
 
         with (
-            patch(f"{_PROFILE}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_PROFILE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_PROFILE}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_PROFILE}.click_element", new_callable=AsyncMock),
             patch(f"{_PROFILE}.type_text", new_callable=AsyncMock),
@@ -135,7 +145,11 @@ class TestOpenToWork:
         register_profile_tools(mcp)
 
         with (
-            patch(f"{_PROFILE}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_PROFILE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_PROFILE}.goto_and_check", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "set_open_to_work")
@@ -181,7 +195,11 @@ class TestAddProfileSkills:
         register_profile_tools(mcp)
 
         with (
-            patch(f"{_PROFILE}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_PROFILE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_PROFILE}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_PROFILE}.click_element", new_callable=AsyncMock),
             patch(f"{_PROFILE}.wait_for_modal", new_callable=AsyncMock),
@@ -205,10 +223,14 @@ class TestFeaturedSkills:
         from linkedin_mcp_server.tools.profile import register_profile_tools
 
         page = MagicMock()
-        page.get_by_text = MagicMock(return_value=MagicMock(count=AsyncMock(return_value=0)))
+        page.get_by_text = MagicMock(
+            return_value=MagicMock(count=AsyncMock(return_value=0))
+        )
         featured_rows = MagicMock()
         featured_rows.count = AsyncMock(return_value=2)
-        featured_rows.nth = lambda idx: MagicMock(inner_text=AsyncMock(return_value=["Python", "SQL"][idx]))
+        featured_rows.nth = lambda idx: MagicMock(
+            inner_text=AsyncMock(return_value=["Python", "SQL"][idx])
+        )
 
         def _locator(selector: str):
             if selector == "span.pv-skill-category-entity__name-text":
@@ -221,7 +243,11 @@ class TestFeaturedSkills:
         register_profile_tools(mcp)
 
         with (
-            patch(f"{_PROFILE}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_PROFILE}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_PROFILE}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_PROFILE}.click_element", new_callable=AsyncMock),
             patch(f"{_PROFILE}.wait_for_modal", new_callable=AsyncMock),

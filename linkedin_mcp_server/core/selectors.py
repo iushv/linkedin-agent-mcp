@@ -427,7 +427,9 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
             "profile_headline_input",
             Role("textbox", "Headline"),
             CSS("input[name='headline']"),
-            CSS("#single-line-text-form-component-formElement-urn-li-jalapeno-edit-top-card-headline"),
+            CSS(
+                "#single-line-text-form-component-formElement-urn-li-jalapeno-edit-top-card-headline"
+            ),
         ),
         "modal_save": chain(
             "profile_modal_save",

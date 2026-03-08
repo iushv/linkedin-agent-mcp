@@ -11,6 +11,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast
 class _DataclassInstance(Protocol):
     __dataclass_fields__: dict[str, Any]
 
+
 T = TypeVar("T")
 
 

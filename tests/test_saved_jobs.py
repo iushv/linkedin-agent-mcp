@@ -56,9 +56,11 @@ class TestSaveJob:
     async def test_save_job_success(self, isolate_safety):
         from linkedin_mcp_server.tools.saved_jobs import register_saved_job_tools
 
-        page = MockPageBuilder().on_goto(
-            "https://www.linkedin.com/jobs/view/4252026496"
-        ).build()
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/jobs/view/4252026496")
+            .build()
+        )
         body = MagicMock()
         body.inner_text = AsyncMock(
             return_value="Senior AI Engineer\nMastercard\nSingapore"
@@ -76,7 +78,11 @@ class TestSaveJob:
         unsave_chain.find = AsyncMock(return_value=unsave_locator)
 
         with (
-            patch(f"{_SAVED}.get_or_create_browser", new_callable=AsyncMock, return_value=_make_browser(page)),
+            patch(
+                f"{_SAVED}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=_make_browser(page),
+            ),
             patch(f"{_SAVED}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_SAVED}.click_element", new_callable=AsyncMock),
             patch(f"{_SAVED}.detect_rate_limit_post_action", new_callable=AsyncMock),
@@ -94,7 +100,9 @@ class TestSaveJob:
 
         assert result["status"] == "success"
         assert result["data"]["job_id"] == "4252026496"
-        assert result["data"]["job_url"] == "https://www.linkedin.com/jobs/view/4252026496"
+        assert (
+            result["data"]["job_url"] == "https://www.linkedin.com/jobs/view/4252026496"
+        )
 
 
 class TestGetSavedJobs:
@@ -110,9 +118,7 @@ class TestGetSavedJobs:
         )
         link = MagicMock()
         link.count = AsyncMock(return_value=1)
-        link.get_attribute = AsyncMock(
-            return_value="/jobs/view/4252026496/"
-        )
+        link.get_attribute = AsyncMock(return_value="/jobs/view/4252026496/")
         row.locator = MagicMock(return_value=MagicMock(first=link))
 
         rows = MagicMock()
@@ -128,7 +134,11 @@ class TestGetSavedJobs:
         register_saved_job_tools(mcp)
 
         with (
-            patch(f"{_SAVED}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
+            patch(
+                f"{_SAVED}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
             patch(f"{_SAVED}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_SAVED}.SELECTORS", {"jobs": {"saved_job_cards": chain}}),
         ):
@@ -165,7 +175,11 @@ class TestGetSavedJobs:
         register_saved_job_tools(mcp)
 
         with (
-            patch(f"{_SAVED}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
+            patch(
+                f"{_SAVED}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
             patch(f"{_SAVED}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_SAVED}.SELECTORS", {"jobs": {"saved_job_cards": chain}}),
         ):
@@ -186,9 +200,7 @@ class TestGetSavedJobs:
         )
         link = MagicMock()
         link.count = AsyncMock(return_value=1)
-        link.get_attribute = AsyncMock(
-            return_value="/jobs/view/4252026496/"
-        )
+        link.get_attribute = AsyncMock(return_value="/jobs/view/4252026496/")
         row.locator = MagicMock(return_value=MagicMock(first=link))
 
         rows = MagicMock()
@@ -204,7 +216,11 @@ class TestGetSavedJobs:
         register_saved_job_tools(mcp)
 
         with (
-            patch(f"{_SAVED}.get_or_create_browser", new_callable=AsyncMock, return_value=browser),
+            patch(
+                f"{_SAVED}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
             patch(f"{_SAVED}.goto_and_check", new_callable=AsyncMock),
             patch(f"{_SAVED}.SELECTORS", {"jobs": {"saved_job_cards": chain}}),
         ):

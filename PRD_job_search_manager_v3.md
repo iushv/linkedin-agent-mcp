@@ -1,7 +1,7 @@
 # PRD: LinkedIn Job Search Manager MCP — v3 (Implementation-Ready)
 
-**Version:** 3.0  
-**Status:** Ready for implementation  
+**Version:** 3.0
+**Status:** Ready for implementation
 **Date:** March 2026
 
 ---

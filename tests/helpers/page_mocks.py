@@ -87,9 +87,7 @@ class MockPageBuilder:
         self._current_url = url
         return self
 
-    def on_role(
-        self, role: str, name: str, *, count: int = 1
-    ) -> "MockPageBuilder":
+    def on_role(self, role: str, name: str, *, count: int = 1) -> "MockPageBuilder":
         key = f"{role}:{name}"
         self._role_locators[key] = MockLocator(
             self._call_log, name=key, count_val=count
@@ -144,9 +142,7 @@ class MockPageBuilder:
                 return MockLocator(log, name="post_link", count_val=0)
             # Check for snackbar/toast
             if "alert" in selector or "toast" in selector or "feedback" in selector:
-                return MockLocator(
-                    log, name="snackbar", count_val=0, text=""
-                )
+                return MockLocator(log, name="snackbar", count_val=0, text="")
             # Rate-limit selectors
             if "captcha" in selector.lower():
                 return MockLocator(log, name="captcha", count_val=0)
@@ -156,9 +152,7 @@ class MockPageBuilder:
                 return MockLocator(log, name="main", count_val=1)
             if selector == "body":
                 return MockLocator(log, name="body", count_val=1, text="normal page")
-            return MockLocator(
-                log, name=f"css:{selector}", count_val=default_count
-            )
+            return MockLocator(log, name=f"css:{selector}", count_val=default_count)
 
         page.locator = MagicMock(side_effect=_locator)
 

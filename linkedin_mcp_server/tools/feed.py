@@ -276,7 +276,14 @@ def _looks_like_analytics_card_text(text: str) -> bool:
     lowered = stripped.lower()
     has_engagement_keyword = any(
         token in lowered
-        for token in ("impressions", "reactions", "likes", "comments", "reposts", "views")
+        for token in (
+            "impressions",
+            "reactions",
+            "likes",
+            "comments",
+            "reposts",
+            "views",
+        )
     )
     if has_engagement_keyword:
         return True
@@ -369,9 +376,7 @@ def _parse_posts_from_activity_text(text: str, limit: int) -> list[dict[str, Any
     if match:
         text = text[: match.start()]
 
-    _SPLIT_PAT = re.compile(
-        r"(?:posted|reposted)\s+this\s*[•·]?\s*", re.IGNORECASE
-    )
+    _SPLIT_PAT = re.compile(r"(?:posted|reposted)\s+this\s*[•·]?\s*", re.IGNORECASE)
     parts = _SPLIT_PAT.split(text)
 
     posts: list[dict[str, Any]] = []
@@ -440,16 +445,18 @@ def _parse_posts_from_activity_text(text: str, limit: int) -> list[dict[str, Any
 
         text_preview = "\n".join(lines[:8])[:300]
 
-        posts.append({
-            "author": author,
-            "url": None,
-            "text_preview": text_preview,
-            "time_ago": time_ago or _extract_time_ago(raw_block),
-            "reactions": reactions,
-            "comments": comments,
-            "reposts": reposts,
-            "impressions": None,  # not available on profile page
-        })
+        posts.append(
+            {
+                "author": author,
+                "url": None,
+                "text_preview": text_preview,
+                "time_ago": time_ago or _extract_time_ago(raw_block),
+                "reactions": reactions,
+                "comments": comments,
+                "reposts": reposts,
+                "impressions": None,  # not available on profile page
+            }
+        )
 
         if len(posts) >= limit:
             break
@@ -459,7 +466,9 @@ def _parse_posts_from_activity_text(text: str, limit: int) -> list[dict[str, Any
 
 async def _resolve_activity_post_cards(page: Any) -> Any:
     """Resolve recent-activity post containers with broader fallbacks than the main feed."""
-    deadline = monotonic() + 4  # tighter cap for analytics keeps interactive latency down
+    deadline = (
+        monotonic() + 4
+    )  # tighter cap for analytics keeps interactive latency down
     last_exc: Exception | None = None
 
     while monotonic() < deadline:

@@ -176,15 +176,13 @@ def _matches_location(candidate: str | None, expected: str | None) -> bool:
     return normalized_expected in normalized_candidate
 
 
-def _matches_title_keyword(card: PersonCard, raw_text: str, title_keyword: str | None) -> bool:
+def _matches_title_keyword(
+    card: PersonCard, raw_text: str, title_keyword: str | None
+) -> bool:
     if not title_keyword:
         return True
     normalized_expected = _normalize_match_text(title_keyword)
-    searchable = " ".join(
-        part
-        for part in [card.headline, raw_text]
-        if part
-    )
+    searchable = " ".join(part for part in [card.headline, raw_text] if part)
     return normalized_expected in _normalize_match_text(searchable)
 
 
@@ -275,14 +273,17 @@ def _card_matches_filters(
 ) -> bool:
     if current_company:
         if not _matches_company_name(card.current_company, current_company) and (
-            _normalize_match_text(current_company) not in _normalize_match_text(raw_text)
+            _normalize_match_text(current_company)
+            not in _normalize_match_text(raw_text)
         ):
             return False
     if past_company:
         if not any(
             _matches_company_name(candidate, past_company)
             for candidate in (card.past_companies or [])
-        ) and _normalize_match_text(past_company) not in _normalize_match_text(raw_text):
+        ) and _normalize_match_text(past_company) not in _normalize_match_text(
+            raw_text
+        ):
             return False
     if location and not _matches_location(card.location, location):
         return False
@@ -815,11 +816,14 @@ def register_people_tools(mcp: FastMCP) -> None:
                     progress=0, total=100, message="Resolving company filters"
                 )
 
-            primary_result, past_result, warnings, slug = (
-                await _resolve_company_people_filters(
-                    company_name=company_name,
-                    past_company=past_company,
-                )
+            (
+                primary_result,
+                past_result,
+                warnings,
+                slug,
+            ) = await _resolve_company_people_filters(
+                company_name=company_name,
+                past_company=past_company,
             )
 
             browser = await get_or_create_browser()
@@ -901,7 +905,9 @@ def register_people_tools(mcp: FastMCP) -> None:
                 partial=partial,
                 warnings=warnings,
                 filters_applied={
-                    "company_name": primary_result.company_id if primary_result else None,
+                    "company_name": primary_result.company_id
+                    if primary_result
+                    else None,
                     "past_company": past_result.company_id if past_result else None,
                     "title_keyword": title_keyword,
                 },

@@ -252,10 +252,7 @@ def short_detail(result: Any) -> str:
         if "error" in payload:
             return f"error={payload['error']}"
         if "url" in payload and "sections" in payload:
-            return (
-                f"sections={len(payload.get('sections', {}))} "
-                f"url={payload['url']}"
-            )
+            return f"sections={len(payload.get('sections', {}))} url={payload['url']}"
         return ",".join(sorted(payload.keys()))
     return repr(payload)
 
@@ -617,9 +614,7 @@ def write_json_report(
 ) -> None:
     path = Path(path_str)
     payload = {
-        "generated_at": datetime.now(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "url": args.url,
         "tool_timeout_seconds": args.tool_timeout,
         "mode": (

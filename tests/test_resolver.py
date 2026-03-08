@@ -41,11 +41,14 @@ class TestResolveCompany:
         assert result == "11448"
 
     def test_company_candidate_matches_rejects_unrelated_result(self):
-        assert resolver._company_candidate_matches(
-            "Mastercard",
-            "visa",
-            "Visa",
-        ) is False
+        assert (
+            resolver._company_candidate_matches(
+                "Mastercard",
+                "visa",
+                "Visa",
+            )
+            is False
+        )
 
     def test_extract_company_display_name_uses_first_line(self):
         result = resolver._extract_company_display_name(
@@ -107,8 +110,10 @@ class TestResolveCompany:
         monkeypatch,
     ):
         cached_at = (
-            datetime.now(timezone.utc) - timedelta(days=40)
-        ).isoformat().replace("+00:00", "Z")
+            (datetime.now(timezone.utc) - timedelta(days=40))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         _write_cache(
             isolate_resolver / "entity_cache.json",
             {

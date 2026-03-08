@@ -201,7 +201,9 @@ def _extract_current_company_ids(value: str | None) -> list[str]:
     return re.findall(r"\d+", raw_values)
 
 
-def _pick_company_filter_id(candidates: list[tuple[str | None, str | None]]) -> str | None:
+def _pick_company_filter_id(
+    candidates: list[tuple[str | None, str | None]],
+) -> str | None:
     best_single: str | None = None
     best_multi: str | None = None
 
@@ -486,8 +488,7 @@ async def resolve_geos(
     """Resolve multiple geo locations concurrently."""
     results = await asyncio.gather(*(resolve_geo(location) for location in locations))
     return {
-        location: result
-        for location, result in zip(locations, results, strict=False)
+        location: result for location, result in zip(locations, results, strict=False)
     }
 
 

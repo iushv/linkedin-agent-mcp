@@ -1,8 +1,8 @@
 # PRD: LinkedIn Job Search Manager MCP
 
-**Version:** 1.0  
-**Status:** Draft  
-**Author:** Ayush Kumar  
+**Version:** 1.0
+**Status:** Draft
+**Author:** Ayush Kumar
 **Date:** March 2026
 
 ---
@@ -113,7 +113,7 @@ Get people currently at a company, optionally filtered by past employer or title
 **Output:** Same shape as `search_people`.
 
 **Implementation notes:**
-- Navigate to `linkedin.com/company/{slug}/people/` 
+- Navigate to `linkedin.com/company/{slug}/people/`
 - Apply filters via URL params or UI interaction
 - Scrape the people cards — name, headline, profile URL, connection degree
 

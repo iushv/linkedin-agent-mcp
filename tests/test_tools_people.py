@@ -64,7 +64,9 @@ class TestSearchPeople:
             "linkedin_mcp_server.tools._common.ensure_authenticated",
             AsyncMock(),
         )
-        monkeypatch.setattr("linkedin_mcp_server.tools.people.goto_and_check", self.mock_goto_and_check)
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.people.goto_and_check", self.mock_goto_and_check
+        )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people._maybe_wait_for_page_gap",
             AsyncMock(),
@@ -114,7 +116,9 @@ class TestSearchPeople:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people.resolve_geo",
-            AsyncMock(return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")),
+            AsyncMock(
+                return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")
+            ),
         )
 
         from fastmcp import FastMCP
@@ -365,7 +369,9 @@ class TestSearchPeople:
         assert result["status"] == "success"
         assert result["data"]["partial"] is True
 
-    async def test_search_people_keyword_fallback_when_filters_unresolved(self, monkeypatch):
+    async def test_search_people_keyword_fallback_when_filters_unresolved(
+        self, monkeypatch
+    ):
         rows = make_rows(
             [
                 make_person_row(
@@ -393,7 +399,9 @@ class TestSearchPeople:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people.resolve_geo",
-            AsyncMock(return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")),
+            AsyncMock(
+                return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")
+            ),
         )
 
         from fastmcp import FastMCP
@@ -413,7 +421,9 @@ class TestSearchPeople:
         assert len(result["data"]["results"]) == 1
         assert self.mock_goto_and_check.await_count == 2
 
-    async def test_search_people_broadens_when_keyword_fallback_empty(self, monkeypatch):
+    async def test_search_people_broadens_when_keyword_fallback_empty(
+        self, monkeypatch
+    ):
         empty_rows = make_rows([])
         broadened_rows = make_rows(
             [
@@ -443,7 +453,9 @@ class TestSearchPeople:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people.resolve_geo",
-            AsyncMock(return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")),
+            AsyncMock(
+                return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")
+            ),
         )
 
         from fastmcp import FastMCP
@@ -480,7 +492,9 @@ class TestSearchPeople:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people.resolve_geo",
-            AsyncMock(return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")),
+            AsyncMock(
+                return_value=ResolvedGeo(geo_id="102454443", geo_label="Singapore")
+            ),
         )
 
         from fastmcp import FastMCP
@@ -576,7 +590,9 @@ class TestGetCompanyPeople:
             "linkedin_mcp_server.tools._common.ensure_authenticated",
             AsyncMock(),
         )
-        monkeypatch.setattr("linkedin_mcp_server.tools.people.goto_and_check", self.mock_goto_and_check)
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.people.goto_and_check", self.mock_goto_and_check
+        )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.people._maybe_wait_for_page_gap",
             AsyncMock(),

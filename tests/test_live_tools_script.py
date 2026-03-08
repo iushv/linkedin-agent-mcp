@@ -179,12 +179,18 @@ def test_validate_args_rejects_focus_with_write_only(tmp_path):
 
 
 def test_effective_cooldown_prefers_override():
-    assert live_tools.effective_cooldown(
-        "get_conversations", 2.0, live_tools.READ_TOOL_COOLDOWNS
-    ) == 6.0
-    assert live_tools.effective_cooldown(
-        "get_person_profile", 2.0, live_tools.READ_TOOL_COOLDOWNS
-    ) == 2.0
+    assert (
+        live_tools.effective_cooldown(
+            "get_conversations", 2.0, live_tools.READ_TOOL_COOLDOWNS
+        )
+        == 6.0
+    )
+    assert (
+        live_tools.effective_cooldown(
+            "get_person_profile", 2.0, live_tools.READ_TOOL_COOLDOWNS
+        )
+        == 2.0
+    )
 
 
 def test_write_json_report_serializes_outcomes(tmp_path):

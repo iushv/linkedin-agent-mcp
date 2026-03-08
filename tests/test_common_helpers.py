@@ -67,10 +67,7 @@ class TestExtractProfileSlug:
         assert extract_profile_slug("user") == "user"
 
     def test_full_url(self):
-        assert (
-            extract_profile_slug("https://www.linkedin.com/in/user/")
-            == "user"
-        )
+        assert extract_profile_slug("https://www.linkedin.com/in/user/") == "user"
 
     def test_profile_path(self):
         assert extract_profile_slug("/in/user/") == "user"
@@ -205,40 +202,20 @@ class TestRunWriteTool:
     @pytest.fixture(autouse=True)
     def _mock_safety(self, isolate_safety, monkeypatch):
         """Stub out auth + safety so we can test branch logic in isolation."""
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.ensure_authenticated", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.acquire_browser_lock", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.release_browser_lock", lambda: None
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.check_session_health", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.require_confirmation", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.acquire_write_lock", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.release_write_lock", lambda: None
-        )
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.ensure_authenticated", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.acquire_browser_lock", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.release_browser_lock", lambda: None)
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.check_session_health", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.require_confirmation", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.acquire_write_lock", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.release_write_lock", lambda: None)
         monkeypatch.setattr(
             f"{_SAFETY_PREFIX}.check_quota",
             AsyncMock(return_value={"limit": 10, "used": 1, "remaining": 9}),
         )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.audit_log", AsyncMock()
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.record_successful_write", lambda: None
-        )
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.record_security_challenge", AsyncMock()
-        )
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.audit_log", AsyncMock())
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.record_successful_write", lambda: None)
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.record_security_challenge", AsyncMock())
 
     async def _call(self, *, dry_run=False, confirm=True, execute_fn=None):
         if execute_fn is None:
@@ -288,9 +265,7 @@ class TestRunWriteTool:
     @pytest.mark.asyncio
     async def test_rate_limit_captcha(self, monkeypatch):
         mock_record = AsyncMock()
-        monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.record_security_challenge", mock_record
-        )
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.record_security_challenge", mock_record)
         result = await self._call(
             execute_fn=AsyncMock(side_effect=RateLimitError("captcha detected"))
         )

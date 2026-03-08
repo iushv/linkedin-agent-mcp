@@ -119,7 +119,9 @@ class TestLocatorChain:
 )
 def test_critical_chains_have_multiple_strategies(group: str, key: str):
     chain = SELECTORS[group][key]
-    assert len(chain.strategies) >= 2, f"{group}.{key} has only {len(chain.strategies)} strategy"
+    assert len(chain.strategies) >= 2, (
+        f"{group}.{key} has only {len(chain.strategies)} strategy"
+    )
 
 
 @pytest.mark.parametrize(

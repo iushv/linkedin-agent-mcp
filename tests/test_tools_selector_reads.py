@@ -230,7 +230,9 @@ class TestMyPostAnalytics:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed._extract_post_url",
-            AsyncMock(return_value="https://www.linkedin.com/feed/update/urn:li:activity:123/"),
+            AsyncMock(
+                return_value="https://www.linkedin.com/feed/update/urn:li:activity:123/"
+            ),
         )
         extract_page = AsyncMock(return_value="")
         monkeypatch.setattr(

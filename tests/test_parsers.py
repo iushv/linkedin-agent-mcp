@@ -155,7 +155,9 @@ class TestBuildActivityPostAnalyticsItem:
         assert result["text_preview"] == "This is the actual post content"
         assert result["impressions"] == 120
         assert result["comments"] == 3
-        assert result["url"] == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+        assert (
+            result["url"] == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+        )
 
     def test_activity_card_parser_strips_visibility_metadata(self):
         text = (
@@ -429,11 +431,7 @@ class TestParseJobSearchResultsText:
 
     def test_filters_noise_rows_from_raw_search_text(self):
         text = (
-            "Are these results helpful?\n"
-            "Data Engineer\n"
-            "Acme\n"
-            "Singapore\n"
-            "1 week ago\n"
+            "Are these results helpful?\nData Engineer\nAcme\nSingapore\n1 week ago\n"
         )
 
         result = _parse_job_search_results_text(text, limit=10)
@@ -442,11 +440,7 @@ class TestParseJobSearchResultsText:
         assert result[0]["title"] == "Data Engineer"
 
     def test_drops_structurally_invalid_raw_rows(self):
-        text = (
-            "Data engineer in Singapore\n"
-            "200+ results\n"
-            "1 week ago\n"
-        )
+        text = "Data engineer in Singapore\n200+ results\n1 week ago\n"
 
         result = _parse_job_search_results_text(text, limit=10)
 
@@ -467,8 +461,7 @@ class TestIsVerificationTitleLine:
 class TestDedupeRepeatedText:
     def test_collapses_adjacent_duplicate_title(self):
         value = (
-            "Software Engineer (Python) - Remote "
-            "Software Engineer (Python) - Remote"
+            "Software Engineer (Python) - Remote Software Engineer (Python) - Remote"
         )
 
         assert _dedupe_repeated_text(value) == "Software Engineer (Python) - Remote"

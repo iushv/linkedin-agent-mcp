@@ -15,7 +15,11 @@ from linkedin_mcp_server.core.schemas import JobCard, is_valid_job_card
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
-from linkedin_mcp_server.tools._common import goto_and_check, run_read_tool, run_write_tool
+from linkedin_mcp_server.tools._common import (
+    goto_and_check,
+    run_read_tool,
+    run_write_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +75,9 @@ def _parse_saved_job_card_text(
     return card if is_valid_job_card(card) else None
 
 
-async def _extract_job_page_summary(page: Any, normalized_url: str) -> dict[str, str | None]:
+async def _extract_job_page_summary(
+    page: Any, normalized_url: str
+) -> dict[str, str | None]:
     try:
         body_text = await page.locator("body").inner_text(timeout=1500)
     except Exception:
@@ -138,9 +144,7 @@ def register_saved_job_tools(mcp: FastMCP) -> None:
             )
 
             if ctx:
-                await ctx.report_progress(
-                    progress=100, total=100, message="Job saved"
-                )
+                await ctx.report_progress(progress=100, total=100, message="Job saved")
 
             return summary
 
@@ -190,7 +194,11 @@ def register_saved_job_tools(mcp: FastMCP) -> None:
             for idx in range(await rows.count()):
                 row = rows.nth(idx)
                 anchor = row.locator("a[href*='/jobs/view/']").first
-                href = await anchor.get_attribute("href") if await anchor.count() > 0 else None
+                href = (
+                    await anchor.get_attribute("href")
+                    if await anchor.count() > 0
+                    else None
+                )
                 if href and href.startswith("/"):
                     href = f"https://www.linkedin.com{href}"
                 text = await row.inner_text(timeout=1000)

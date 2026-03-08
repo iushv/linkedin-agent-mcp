@@ -234,8 +234,7 @@ def _parse_job_search_results_text(
         informative = [
             line
             for line in block
-            if line.lower() not in _JOB_NOISE_LINES
-            and "applicant" not in line.lower()
+            if line.lower() not in _JOB_NOISE_LINES and "applicant" not in line.lower()
         ]
         if len(informative) < 2:
             continue
@@ -444,9 +443,7 @@ def _finalize_job_results(
         if normalized is None:
             continue
         dedupe_key = (
-            normalized.get("job_id")
-            or normalized.get("job_url")
-            or normalized["title"]
+            normalized.get("job_id") or normalized.get("job_url") or normalized["title"]
         )
         if not dedupe_key:
             continue

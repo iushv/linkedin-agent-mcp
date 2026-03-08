@@ -84,7 +84,10 @@ class TestParseHelpers:
         )
 
         assert card is not None
-        assert card.current_company == "Director, Global Fraud Decision Science at American Express"
+        assert (
+            card.current_company
+            == "Director, Global Fraud Decision Science at American Express"
+        )
         assert card.past_companies == ["Associate managing consultant at Mastercard"]
 
     def test_card_matches_filters_uses_raw_text_for_past_company(self):

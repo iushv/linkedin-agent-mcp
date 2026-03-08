@@ -52,7 +52,9 @@ _last_navigation_started_at = 0.0
 
 async def goto_and_check(page: Any, url: str, *, timeout_ms: int | None = None) -> None:
     """Navigate and run baseline challenge/rate-limit checks."""
-    effective_timeout_ms = timeout_ms or max(get_config().browser.default_timeout, 15000)
+    effective_timeout_ms = timeout_ms or max(
+        get_config().browser.default_timeout, 15000
+    )
     last_error: Exception | None = None
 
     for attempt in range(NAVIGATION_RETRIES + 1):

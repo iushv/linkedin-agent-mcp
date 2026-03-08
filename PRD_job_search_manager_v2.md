@@ -1,7 +1,7 @@
 # PRD: LinkedIn Job Search Manager MCP — v2
 
-**Version:** 2.0  
-**Status:** Draft  
+**Version:** 2.0
+**Status:** Draft
 **Date:** March 2026
 
 ---
