@@ -84,9 +84,13 @@ async def type_text(
     await _with_retries(f"type:{locator_chain.name}", _type)
 
 
-async def wait_for_modal(page: Page, timeout: int = 5000) -> None:
-    """Wait for a LinkedIn Artdeco modal to become visible."""
-    modal = page.locator(".artdeco-modal").first
+async def wait_for_modal(page: Page, timeout: int = 8000) -> None:
+    """Wait for a LinkedIn modal or composer overlay to become visible."""
+    # LinkedIn uses .artdeco-modal for traditional dialogs and
+    # .share-creation-state / [role="dialog"] for the post composer overlay.
+    modal = page.locator(
+        ".artdeco-modal, .share-creation-state, [role='dialog']"
+    ).first
     try:
         await modal.wait_for(state="visible", timeout=timeout)
     except PlaywrightTimeoutError as exc:

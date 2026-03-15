@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -26,8 +27,53 @@ logger = logging.getLogger(__name__)
 
 async def _open_composer(page: Any) -> None:
     await goto_and_check(page, "https://www.linkedin.com/feed/")
-    await click_element(page, SELECTORS["post_composer"]["trigger"])
-    await wait_for_modal(page)
+    # Scroll to top and wait for React to fully initialise before touching the trigger.
+    # LinkedIn's new SPA uses synthetic React events — locator.click() does not fire
+    # them reliably.  page.mouse.click() at real viewport coordinates does.
+    try:
+        await page.evaluate("window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    await asyncio.sleep(5)  # let React mount & attach event handlers
+
+    # Resolve the trigger element and click it using real mouse coordinates.
+    opened = False
+    try:
+        trigger = await SELECTORS["post_composer"]["trigger"].find(page, timeout=10000)
+        box = await trigger.bounding_box()
+        if box:
+            cx = box["x"] + box["width"] / 2
+            cy = box["y"] + box["height"] / 2
+            await page.mouse.move(cx, cy)
+            await asyncio.sleep(0.15)
+            await page.mouse.click(cx, cy)
+            opened = True
+        else:
+            logger.debug("Trigger has no bounding box — falling back to JS click")
+    except Exception as exc:
+        logger.debug("Mouse click on post trigger failed (%s), trying JS click fallback", exc)
+
+    if not opened:
+        # Last-resort: JS click on any recognised trigger selector
+        await page.evaluate(
+            """document.querySelector(
+                'div[role="button"]'
+            )?.click()"""
+        )
+
+    # Wait for the composer text editor to appear — works whether the composer opens
+    # as an artdeco modal, a share-creation-state overlay, or a full-page route.
+    try:
+        await page.wait_for_selector(
+            ".artdeco-modal .ql-editor, "
+            ".share-creation-state .ql-editor, "
+            "[role='dialog'] .ql-editor, "
+            ".ql-editor[contenteditable='true']",
+            timeout=10000,
+        )
+    except Exception:
+        # Fall back to the legacy modal wait so existing error handling is preserved
+        await wait_for_modal(page)
 
 
 async def _set_visibility_if_needed(page: Any, visibility: str) -> None:

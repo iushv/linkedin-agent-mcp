@@ -150,9 +150,10 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
     "post_composer": {
         "trigger": chain(
             "post_trigger",
-            AriaLabel("Start a post"),
             Role("button", "Start a post"),
             CSS(".share-box-feed-entry__trigger"),
+            CSS("[data-placeholder*='Start a post']"),
+            AriaLabel("Start a post"),
         ),
         "text_editor": chain(
             "post_text_editor",

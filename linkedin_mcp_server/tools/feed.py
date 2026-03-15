@@ -635,7 +635,8 @@ def register_feed_tools(mcp: FastMCP) -> None:
             stagnant_scrolls = 0
             last_total = 0
 
-            while len(posts) < safe_count and stagnant_scrolls < 4:
+            _feed_deadline = monotonic() + 45  # 45s budget keeps us inside 60s MCP ceiling
+            while len(posts) < safe_count and stagnant_scrolls < 2 and monotonic() < _feed_deadline:
                 cards = await _resolve_post_cards(page)
                 total_cards = await cards.count()
 
@@ -785,12 +786,17 @@ def register_feed_tools(mcp: FastMCP) -> None:
                         )
                     except Exception:
                         logger.debug("Dashboard analytics: scroll fallback unavailable")
-                    body_text = await page.locator("body").inner_text(timeout=3000)
+                    # Wait for body to stabilise (SPA redirect can transiently remove it)
+                    try:
+                        await page.wait_for_selector("body", timeout=8000)
+                    except Exception:
+                        logger.debug("Dashboard analytics: body wait timed out")
+                    body_text = await page.locator("body").inner_text(timeout=8000)
                     return _extract_profile_analytics_from_text(body_text)
 
                 return _extract_profile_analytics_from_text(dashboard_text)
 
-            result = await asyncio.wait_for(_read_dashboard(), timeout=15)
+            result = await asyncio.wait_for(_read_dashboard(), timeout=25)
 
             if ctx:
                 await ctx.report_progress(progress=100, total=100, message="Complete")
