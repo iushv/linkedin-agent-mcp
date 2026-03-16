@@ -27,13 +27,24 @@ async def detect_rate_limit(page: Page) -> None:
     Raises:
         RateLimitError: If any rate-limiting or security challenge is detected
     """
+    from .safety import get_captcha_count
+
+    # Graduated wait times based on how many CAPTCHAs the session has seen
+    captcha_count = get_captcha_count()
+    if captcha_count == 0:
+        captcha_wait = 300
+    elif captcha_count == 1:
+        captcha_wait = 1800
+    else:
+        captcha_wait = 3600
+
     # Check URL for security challenges
     current_url = page.url
     if "linkedin.com/checkpoint" in current_url or "authwall" in current_url:
         raise RateLimitError(
             "LinkedIn security checkpoint detected. "
             "You may need to verify your identity or wait before continuing.",
-            suggested_wait_time=3600,
+            suggested_wait_time=captcha_wait,
         )
 
     # Check for CAPTCHA
@@ -44,7 +55,7 @@ async def detect_rate_limit(page: Page) -> None:
         if captcha > 0:
             raise RateLimitError(
                 "CAPTCHA challenge detected. Manual intervention required.",
-                suggested_wait_time=3600,
+                suggested_wait_time=captcha_wait,
             )
     except RateLimitError:
         raise
@@ -148,18 +159,52 @@ async def scroll_to_bottom(
 ) -> None:
     """Scroll to the bottom of the page to trigger lazy loading.
 
+    Uses variable scroll distances instead of jumping to full page height
+    each time, producing a more human-like scroll pattern.
+
     Args:
         page: Patchright page object
         pause_time: Time to pause between scrolls (seconds)
         max_scrolls: Maximum number of scroll attempts
     """
+    from .timing import scroll_distance
+
     for i in range(max_scrolls):
         previous_height = await page.evaluate("document.body.scrollHeight")
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+        # Scroll by a variable distance based on viewport height.
+        # Fall back to full-page scroll when viewport info is unavailable
+        # (e.g. in test mocks that return non-dict from evaluate).
+        try:
+            viewport = await page.evaluate(
+                "() => ({ h: window.innerHeight, y: window.scrollY })"
+            )
+            vh = int(viewport["h"])
+            sy = int(viewport["y"])
+        except (TypeError, KeyError, ValueError):
+            vh = 0
+            sy = 0
+
+        if vh > 0:
+            distance = scroll_distance(vh)
+            target = min(sy + distance, previous_height)
+            await page.evaluate(f"window.scrollTo(0, {target})")
+        else:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
         await asyncio.sleep(pause_time)
 
         new_height = await page.evaluate("document.body.scrollHeight")
-        if new_height == previous_height:
+        if vh > 0:
+            try:
+                current_y = await page.evaluate("window.scrollY + window.innerHeight")
+                at_bottom = new_height == previous_height and current_y >= new_height
+            except (TypeError, ValueError):
+                at_bottom = new_height == previous_height
+        else:
+            at_bottom = new_height == previous_height
+
+        if at_bottom:
             logger.debug("Reached bottom after %d scrolls", i + 1)
             break
 

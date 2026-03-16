@@ -20,13 +20,19 @@ from linkedin_mcp_server.core.interactions import (
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
-from linkedin_mcp_server.tools._common import goto_and_check, run_write_tool
+from linkedin_mcp_server.tools._common import (
+    ensure_page_healthy,
+    goto_and_check,
+    run_write_tool,
+)
 
 logger = logging.getLogger(__name__)
 
 
 async def _open_composer(page: Any) -> None:
     await goto_and_check(page, "https://www.linkedin.com/feed/")
+    # Fail fast if the page loaded into a CAPTCHA/challenge state
+    await ensure_page_healthy(page)
     # Scroll to top and wait for React to fully initialise before touching the trigger.
     # LinkedIn's new SPA uses synthetic React events — locator.click() does not fire
     # them reliably.  page.mouse.click() at real viewport coordinates does.
@@ -51,7 +57,9 @@ async def _open_composer(page: Any) -> None:
         else:
             logger.debug("Trigger has no bounding box — falling back to JS click")
     except Exception as exc:
-        logger.debug("Mouse click on post trigger failed (%s), trying JS click fallback", exc)
+        logger.debug(
+            "Mouse click on post trigger failed (%s), trying JS click fallback", exc
+        )
 
     if not opened:
         # Last-resort: JS click on any recognised trigger selector

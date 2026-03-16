@@ -40,13 +40,14 @@ from linkedin_mcp_server.core.safety import (
     release_write_lock,
     require_confirmation,
 )
+from linkedin_mcp_server.core.throttle import AdaptiveThrottle
+from linkedin_mcp_server.core.timing import navigation_delay
 from linkedin_mcp_server.core.utils import backoff_with_jitter, detect_rate_limit
 from linkedin_mcp_server.drivers.browser import ensure_authenticated
 
 logger = logging.getLogger(__name__)
 SLOW_TOOL_SECONDS = 20.0
-MIN_NAVIGATION_GAP_SECONDS = 2.5
-NAVIGATION_RETRIES = 1
+NAVIGATION_RETRIES = 2
 _last_navigation_started_at = 0.0
 
 
@@ -60,11 +61,14 @@ async def goto_and_check(page: Any, url: str, *, timeout_ms: int | None = None) 
     for attempt in range(NAVIGATION_RETRIES + 1):
         await _respect_navigation_gap()
         try:
+            nav_start = perf_counter()
             await page.goto(
                 url,
                 wait_until="domcontentloaded",
                 timeout=effective_timeout_ms,
             )
+            elapsed_ms = (perf_counter() - nav_start) * 1000
+            AdaptiveThrottle.get().record(elapsed_ms)
             await detect_rate_limit(page)
             return
         except Exception as exc:
@@ -93,16 +97,17 @@ async def goto_and_check(page: Any, url: str, *, timeout_ms: int | None = None) 
 async def _respect_navigation_gap() -> None:
     global _last_navigation_started_at
 
+    gap = navigation_delay() * AdaptiveThrottle.get().get_multiplier()
     now = monotonic()
     elapsed = now - _last_navigation_started_at
-    if _last_navigation_started_at > 0 and elapsed < MIN_NAVIGATION_GAP_SECONDS:
-        await asyncio.sleep(MIN_NAVIGATION_GAP_SECONDS - elapsed)
+    if _last_navigation_started_at > 0 and elapsed < gap:
+        await asyncio.sleep(gap - elapsed)
 
     _last_navigation_started_at = monotonic()
 
 
 def _should_retry_navigation(exc: Exception) -> bool:
-    if isinstance(exc, PlaywrightTimeoutError):
+    if isinstance(exc, (PlaywrightTimeoutError, TimeoutError)):
         return True
     if not isinstance(exc, RateLimitError):
         return False
@@ -242,6 +247,18 @@ def _log_tool_completion(
     )
 
 
+async def ensure_page_healthy(page: Any) -> None:
+    """Pre-flight check that the page is not in a CAPTCHA/challenge state.
+
+    Call this before attempting UI interactions (clicks, form fills) to
+    fail fast instead of burning 20+ seconds on doomed attempts.
+
+    Raises:
+        RateLimitError: If the page shows CAPTCHA or security challenge indicators.
+    """
+    await detect_rate_limit(page)
+
+
 async def run_read_tool(
     action: str,
     fetch_fn: Callable[[], Awaitable[dict[str, Any]]],
@@ -254,8 +271,26 @@ async def run_read_tool(
         await acquire_browser_lock(action)
         browser_lock_acquired = True
         await ensure_authenticated()
+        await check_session_health()
         payload = await fetch_fn()
         result = read_success(action=action, data=payload)
+    except RateLimitError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if "captcha" in lowered or "challenge" in lowered:
+            await record_security_challenge()
+
+        warnings: list[str] = []
+        wait_seconds = getattr(exc, "suggested_wait_time", None)
+        if isinstance(wait_seconds, int) and wait_seconds > 0:
+            warnings.append(f"Suggested wait: {wait_seconds}s before retrying.")
+
+        result = read_error(
+            action=action,
+            message=message,
+            error_code="rate_limit",
+            warnings=warnings or None,
+        )
     except Exception as exc:
         result = read_error(
             action=action,

@@ -313,7 +313,22 @@ def get_session_health() -> dict[str, Any]:
         "disabled_until": _session_health.disabled_until.isoformat() + "Z"
         if _session_health.disabled_until
         else None,
+        "degraded": is_session_degraded(),
     }
+
+
+def get_captcha_count() -> int:
+    """Return the number of consecutive CAPTCHAs in this session."""
+    return _session_health.consecutive_captchas
+
+
+def is_session_degraded() -> bool:
+    """Return True if at least one CAPTCHA has been seen but writes aren't fully disabled.
+
+    A degraded session should increase delays and warn callers, while a
+    *disabled* session (3+ CAPTCHAs) blocks write tools entirely.
+    """
+    return _session_health.consecutive_captchas > 0
 
 
 def reset_safety_state() -> None:

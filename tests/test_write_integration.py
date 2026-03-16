@@ -86,6 +86,7 @@ class TestCreatePostGoldenPath:
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
             ),
+            patch(f"{_POST}.ensure_page_healthy", new_callable=AsyncMock),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.type_text", new_callable=AsyncMock),
             patch(f"{_POST}.wait_for_modal", new_callable=AsyncMock),

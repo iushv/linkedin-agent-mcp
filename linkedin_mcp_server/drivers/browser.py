@@ -65,16 +65,34 @@ async def get_or_create_browser(
 
     config = get_config()
     user_data_dir = Path(config.browser.user_data_dir).expanduser()
-    viewport = {
-        "width": config.browser.viewport_width,
-        "height": config.browser.viewport_height,
-    }
+
+    # Randomize viewport per session unless user explicitly set it
+    if config.browser.randomize_viewport and not config.browser.viewport_explicitly_set:
+        from linkedin_mcp_server.core.timing import viewport_dimensions
+
+        w, h = viewport_dimensions()
+        viewport = {"width": w, "height": h}
+    else:
+        viewport = {
+            "width": config.browser.viewport_width,
+            "height": config.browser.viewport_height,
+        }
 
     # Build launch options for custom browser path
     launch_options: dict[str, str] = {}
     if config.browser.chrome_path:
         launch_options["executable_path"] = config.browser.chrome_path
         logger.info("Using custom Chrome path: %s", config.browser.chrome_path)
+
+    # Build proxy config if set
+    if config.browser.proxy_server:
+        proxy_config: dict[str, str] = {"server": config.browser.proxy_server}
+        if config.browser.proxy_username:
+            proxy_config["username"] = config.browser.proxy_username
+        if config.browser.proxy_password:
+            proxy_config["password"] = config.browser.proxy_password
+        launch_options["proxy"] = proxy_config  # type: ignore[assignment]
+        logger.info("Using proxy: %s", config.browser.proxy_server)
 
     logger.info(
         "Creating new browser (headless=%s, slow_mo=%sms, viewport=%sx%s, profile=%s)",

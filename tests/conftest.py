@@ -23,15 +23,18 @@ def reset_singletons():
     """Reset global state for test isolation."""
     from linkedin_mcp_server.config import reset_config
     from linkedin_mcp_server.core.resolver import reset_resolver_state
+    from linkedin_mcp_server.core.throttle import AdaptiveThrottle
     from linkedin_mcp_server.drivers.browser import reset_browser_for_testing
 
     reset_browser_for_testing()
     reset_resolver_state()
     reset_config()
+    AdaptiveThrottle.reset_singleton()
     yield
     reset_browser_for_testing()
     reset_resolver_state()
     reset_config()
+    AdaptiveThrottle.reset_singleton()
 
 
 @pytest.fixture(autouse=True)

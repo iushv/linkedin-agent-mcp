@@ -26,6 +26,11 @@ class BrowserConfig:
     default_timeout: int = 5000  # Milliseconds for page operations
     chrome_path: str | None = None  # Path to Chrome/Chromium executable
     user_data_dir: str = "~/.linkedin-mcp/profile"  # Persistent browser profile
+    randomize_viewport: bool = True  # Pick random common resolution per session
+    viewport_explicitly_set: bool = False  # Track if user set --viewport or VIEWPORT
+    proxy_server: str | None = None  # HTTP/SOCKS5 proxy URL
+    proxy_username: str | None = None
+    proxy_password: str | None = None
 
     def validate(self) -> None:
         """Validate browser configuration values."""
@@ -50,6 +55,12 @@ class BrowserConfig:
             if not chrome_path.is_file():
                 raise ConfigurationError(
                     f"chrome_path '{self.chrome_path}' is not a file"
+                )
+        if self.proxy_server:
+            valid_schemes = ("http://", "https://", "socks5://")
+            if not self.proxy_server.startswith(valid_schemes):
+                raise ConfigurationError(
+                    f"proxy_server must start with http://, https://, or socks5://, got '{self.proxy_server}'"
                 )
 
 

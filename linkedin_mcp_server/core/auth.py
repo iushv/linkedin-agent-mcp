@@ -2,29 +2,41 @@
 
 import asyncio
 import logging
+import random
 
 from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from .exceptions import AuthenticationError
+from .timing import navigation_delay
 
 logger = logging.getLogger(__name__)
 
+# Pool of benign sites for warm-up — a random subset is visited each session
+_WARMUP_SITES = [
+    "https://www.google.com",
+    "https://www.wikipedia.org",
+    "https://www.github.com",
+    "https://news.ycombinator.com",
+    "https://www.reddit.com",
+]
+
+# Visit between 2 and 4 sites per warm-up
+_WARMUP_MIN = 2
+_WARMUP_MAX = 4
+
 
 async def warm_up_browser(page: Page) -> None:
-    """Visit normal sites to appear more human-like before LinkedIn access."""
-    sites = [
-        "https://www.google.com",
-        "https://www.wikipedia.org",
-        "https://www.github.com",
-    ]
+    """Visit a random subset of benign sites with human-like timing."""
+    count = random.randint(_WARMUP_MIN, min(_WARMUP_MAX, len(_WARMUP_SITES)))
+    sites = random.sample(_WARMUP_SITES, count)
 
-    logger.info("Warming up browser by visiting normal sites...")
+    logger.info("Warming up browser by visiting %d sites...", len(sites))
 
     failures = 0
     for site in sites:
         try:
             await page.goto(site, wait_until="domcontentloaded", timeout=10000)
-            await asyncio.sleep(1)
+            await asyncio.sleep(navigation_delay())
             logger.debug("Visited %s", site)
         except Exception as e:
             failures += 1

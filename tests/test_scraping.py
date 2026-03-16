@@ -122,8 +122,8 @@ class TestExtractPage:
             )
 
         assert result == _RATE_LIMITED_MSG
-        # goto called twice (initial + retry)
-        assert mock_page.goto.await_count == 2
+        # goto called 4 times (initial + 3 retries)
+        assert mock_page.goto.await_count == 4
 
     async def test_retry_succeeds_after_rate_limit(self, mock_page):
         """When first attempt is rate-limited but retry succeeds, return content."""

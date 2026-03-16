@@ -47,6 +47,10 @@ class EnvironmentKeys:
     VIEWPORT = "VIEWPORT"
     CHROME_PATH = "CHROME_PATH"
     USER_DATA_DIR = "USER_DATA_DIR"
+    RANDOMIZE_VIEWPORT = "RANDOMIZE_VIEWPORT"
+    PROXY_SERVER = "PROXY_SERVER"
+    PROXY_USERNAME = "PROXY_USERNAME"
+    PROXY_PASSWORD = "PROXY_PASSWORD"
 
 
 def is_interactive_environment() -> bool:
@@ -138,6 +142,7 @@ def load_from_env(config: AppConfig) -> AppConfig:
             width, height = viewport_env.lower().split("x")
             config.browser.viewport_width = int(width)
             config.browser.viewport_height = int(height)
+            config.browser.viewport_explicitly_set = True
         except ValueError:
             raise ConfigurationError(
                 f"Invalid VIEWPORT: '{viewport_env}'. Must be in format WxH (e.g., 1280x720)."
@@ -146,6 +151,20 @@ def load_from_env(config: AppConfig) -> AppConfig:
     # Custom Chrome/Chromium executable path
     if chrome_path_env := os.environ.get(EnvironmentKeys.CHROME_PATH):
         config.browser.chrome_path = chrome_path_env
+
+    # Viewport randomization
+    if os.environ.get(EnvironmentKeys.RANDOMIZE_VIEWPORT) in FALSY_VALUES:
+        config.browser.randomize_viewport = False
+    elif os.environ.get(EnvironmentKeys.RANDOMIZE_VIEWPORT) in TRUTHY_VALUES:
+        config.browser.randomize_viewport = True
+
+    # Proxy configuration
+    if proxy_server := os.environ.get(EnvironmentKeys.PROXY_SERVER):
+        config.browser.proxy_server = proxy_server
+    if proxy_username := os.environ.get(EnvironmentKeys.PROXY_USERNAME):
+        config.browser.proxy_username = proxy_username
+    if proxy_password := os.environ.get(EnvironmentKeys.PROXY_PASSWORD):
+        config.browser.proxy_password = proxy_password
 
     return config
 
@@ -263,6 +282,29 @@ def load_from_args(config: AppConfig) -> AppConfig:
         help="Path to persistent browser profile directory (default: ~/.linkedin-mcp/profile)",
     )
 
+    # Proxy configuration
+    parser.add_argument(
+        "--proxy-server",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="HTTP/SOCKS5 proxy server URL (e.g., http://proxy:8080 or socks5://proxy:1080)",
+    )
+
+    parser.add_argument(
+        "--proxy-username",
+        type=str,
+        default=None,
+        help="Proxy authentication username",
+    )
+
+    parser.add_argument(
+        "--proxy-password",
+        type=str,
+        default=None,
+        help="Proxy authentication password",
+    )
+
     args = parser.parse_args()
 
     # Update configuration with parsed arguments
@@ -298,6 +340,7 @@ def load_from_args(config: AppConfig) -> AppConfig:
             width, height = args.viewport.lower().split("x")
             config.browser.viewport_width = int(width)
             config.browser.viewport_height = int(height)
+            config.browser.viewport_explicitly_set = True
         except ValueError:
             raise ConfigurationError(
                 f"Invalid --viewport: '{args.viewport}'. Must be in format WxH (e.g., 1280x720)."
@@ -321,6 +364,14 @@ def load_from_args(config: AppConfig) -> AppConfig:
 
     if args.user_data_dir:
         config.browser.user_data_dir = args.user_data_dir
+
+    # Proxy configuration
+    if args.proxy_server:
+        config.browser.proxy_server = args.proxy_server
+    if args.proxy_username:
+        config.browser.proxy_username = args.proxy_username
+    if args.proxy_password:
+        config.browser.proxy_password = args.proxy_password
 
     return config
 

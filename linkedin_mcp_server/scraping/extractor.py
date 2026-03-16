@@ -3,13 +3,21 @@
 import asyncio
 import logging
 import re
+from time import monotonic
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote_plus
 
 from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from linkedin_mcp_server.core.exceptions import LinkedInScraperException
+from linkedin_mcp_server.core.timing import (
+    navigation_delay,
+    scroll_count,
+    scroll_pause,
+    search_scroll_count,
+)
 from linkedin_mcp_server.core.utils import (
+    backoff_with_jitter,
     detect_rate_limit,
     handle_modal_close,
     scroll_to_bottom,
@@ -24,11 +32,11 @@ from .fields import (
 
 logger = logging.getLogger(__name__)
 
-# Delay between page navigations to avoid rate limiting
-_NAV_DELAY = 2.0
+# Maximum soft-rate-limit retries before giving up
+_MAX_SOFT_RETRIES = 3
 
-# Backoff before retrying a rate-limited page
-_RATE_LIMIT_RETRY_DELAY = 5.0
+# Time budget for retries — leave headroom for remaining work within the 60s MCP ceiling
+_RETRY_TIME_BUDGET = 40.0
 
 # Returned as section text when LinkedIn rate-limits the page
 _RATE_LIMITED_MSG = "[Rate limited] LinkedIn blocked this section. Try again later or request fewer sections."
@@ -84,23 +92,41 @@ class LinkedInExtractor:
     async def extract_page(self, url: str) -> str:
         """Navigate to a URL, scroll to load lazy content, and extract innerText.
 
-        Retries once after a backoff when the page returns only LinkedIn chrome
-        (sidebar/footer noise with no actual content), which indicates a soft
-        rate limit.
+        Retries up to ``_MAX_SOFT_RETRIES`` times with exponential backoff when
+        the page returns only LinkedIn chrome (soft rate limit).  Aborts retries
+        when the elapsed time exceeds ``_RETRY_TIME_BUDGET`` to stay within the
+        60s MCP interactive ceiling.
 
         Raises LinkedInScraperException subclasses (rate limit, auth, etc.).
-        Returns _RATE_LIMITED_MSG sentinel when soft-rate-limited after retry.
+        Returns _RATE_LIMITED_MSG sentinel when soft-rate-limited after all retries.
         Returns empty string for unexpected non-domain failures (error isolation).
         """
+        started = monotonic()
         try:
-            result = await self._extract_page_once(url)
-            if result != _RATE_LIMITED_MSG:
-                return result
+            for attempt in range(_MAX_SOFT_RETRIES + 1):
+                result = await self._extract_page_once(url)
+                if result != _RATE_LIMITED_MSG:
+                    return result
 
-            # Retry once after backoff
-            logger.info("Retrying %s after %.0fs backoff", url, _RATE_LIMIT_RETRY_DELAY)
-            await asyncio.sleep(_RATE_LIMIT_RETRY_DELAY)
-            return await self._extract_page_once(url)
+                if attempt >= _MAX_SOFT_RETRIES:
+                    return result
+
+                if monotonic() - started > _RETRY_TIME_BUDGET:
+                    logger.warning("Retry time budget exhausted for %s", url)
+                    return result
+
+                delay = await backoff_with_jitter(
+                    attempt, base_seconds=3, max_seconds=20
+                )
+                logger.info(
+                    "Retrying %s (attempt %d/%d, backoff %.1fs)",
+                    url,
+                    attempt + 1,
+                    _MAX_SOFT_RETRIES,
+                    delay,
+                )
+
+            return _RATE_LIMITED_MSG
 
         except LinkedInScraperException:
             raise
@@ -121,8 +147,10 @@ class LinkedInExtractor:
         # Dismiss any modals blocking content
         await handle_modal_close(self._page)
 
-        # Scroll to trigger lazy loading
-        await scroll_to_bottom(self._page, pause_time=0.5, max_scrolls=5)
+        # Scroll to trigger lazy loading (randomized)
+        await scroll_to_bottom(
+            self._page, pause_time=scroll_pause(), max_scrolls=scroll_count()
+        )
 
         # Extract text from main content area
         raw = await self._page.evaluate(
@@ -148,21 +176,36 @@ class LinkedInExtractor:
         LinkedIn renders contact info as a native <dialog> element.
         Falls back to `<main>` if no dialog is found.
 
-        Retries once after a backoff when the overlay returns only LinkedIn
-        chrome (noise), mirroring `extract_page` behavior.
+        Retries up to ``_MAX_SOFT_RETRIES`` times with exponential backoff
+        when the overlay returns only LinkedIn chrome (noise), mirroring
+        ``extract_page`` behavior.
         """
+        started = monotonic()
         try:
-            result = await self._extract_overlay_once(url)
-            if result != _RATE_LIMITED_MSG:
-                return result
+            for attempt in range(_MAX_SOFT_RETRIES + 1):
+                result = await self._extract_overlay_once(url)
+                if result != _RATE_LIMITED_MSG:
+                    return result
 
-            logger.info(
-                "Retrying overlay %s after %.0fs backoff",
-                url,
-                _RATE_LIMIT_RETRY_DELAY,
-            )
-            await asyncio.sleep(_RATE_LIMIT_RETRY_DELAY)
-            return await self._extract_overlay_once(url)
+                if attempt >= _MAX_SOFT_RETRIES:
+                    return result
+
+                if monotonic() - started > _RETRY_TIME_BUDGET:
+                    logger.warning("Retry time budget exhausted for overlay %s", url)
+                    return result
+
+                delay = await backoff_with_jitter(
+                    attempt, base_seconds=3, max_seconds=20
+                )
+                logger.info(
+                    "Retrying overlay %s (attempt %d/%d, backoff %.1fs)",
+                    url,
+                    attempt + 1,
+                    _MAX_SOFT_RETRIES,
+                    delay,
+                )
+
+            return _RATE_LIMITED_MSG
 
         except LinkedInScraperException:
             raise
@@ -282,8 +325,8 @@ class LinkedInExtractor:
                 logger.warning("Error scraping section %s: %s", section_name, e)
                 pages_visited.append(url)
 
-            # Delay between navigations
-            await asyncio.sleep(_NAV_DELAY)
+            # Randomized delay between navigations
+            await asyncio.sleep(navigation_delay())
 
         # Build sections_requested from flags
         requested = ["main_profile"]
@@ -334,7 +377,8 @@ class LinkedInExtractor:
                 logger.warning("Error scraping section %s: %s", section_name, e)
                 pages_visited.append(url)
 
-            await asyncio.sleep(_NAV_DELAY)
+            # Randomized delay between navigations
+            await asyncio.sleep(navigation_delay())
 
         # Build sections_requested from flags
         requested = ["about"]
@@ -397,8 +441,10 @@ class LinkedInExtractor:
             pass
 
         await handle_modal_close(self._page)
-        # 2 scrolls (≈1s) instead of the generic 5 (≈2.5s) to save wall time
-        await scroll_to_bottom(self._page, pause_time=0.5, max_scrolls=2)
+        # Lighter scroll for search pages to save wall time
+        await scroll_to_bottom(
+            self._page, pause_time=scroll_pause(), max_scrolls=search_scroll_count()
+        )
 
         raw = await self._page.evaluate(
             """() => {
