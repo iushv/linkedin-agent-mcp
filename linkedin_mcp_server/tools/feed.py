@@ -16,7 +16,12 @@ from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core import handle_modal_close
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.scraping.extractor import LinkedInExtractor
-from linkedin_mcp_server.tools._common import goto_and_check, parse_count, run_read_tool
+from linkedin_mcp_server.tools._common import (
+    ensure_page_healthy,
+    goto_and_check,
+    parse_count,
+    run_read_tool,
+)
 
 logger = logging.getLogger(__name__)
 _ACTIVITY_CARD_TEXT_TIMEOUT_MS = 800
@@ -623,13 +628,30 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 await ctx.report_progress(progress=0, total=100, message="Loading feed")
 
             await goto_and_check(page, "https://www.linkedin.com/feed/")
+            await ensure_page_healthy(page)
 
-            # Wait for SPA to render, dismiss any modal overlay
+            # Wait for SPA to render, dismiss any modal or consent overlay
             try:
                 await page.wait_for_selector("main", timeout=8000)
             except Exception:
                 logger.debug("No <main> on feed page; proceeding anyway")
             await handle_modal_close(page)
+            # Dismiss cookie/GDPR consent banners that block feed rendering
+            for consent_sel in (
+                "button[action-type='ACCEPT']",
+                "button[data-tracking-control-name='cookie-policy-banner-accept']",
+                "button:has-text('Accept cookies')",
+                "button:has-text('Accept all')",
+            ):
+                try:
+                    btn = page.locator(consent_sel).first
+                    if await btn.count() > 0:
+                        await btn.click(timeout=2000)
+                        logger.debug("Dismissed consent banner: %s", consent_sel)
+                        await asyncio.sleep(0.8)
+                        break
+                except Exception:
+                    pass
 
             posts: list[dict[str, Any]] = []
             stagnant_scrolls = 0
@@ -702,8 +724,11 @@ def register_feed_tools(mcp: FastMCP) -> None:
 
             posts: list[dict[str, Any]] = []
             try:
-                posts = await _extract_activity_posts_from_dom(page, limit=safe_limit)
-            except Exception:
+                posts = await asyncio.wait_for(
+                    _extract_activity_posts_from_dom(page, limit=safe_limit),
+                    timeout=35.0,
+                )
+            except (asyncio.TimeoutError, Exception):
                 logger.warning(
                     "Recent activity DOM extraction failed; falling back to profile text",
                     exc_info=True,

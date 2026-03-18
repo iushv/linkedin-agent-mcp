@@ -9,6 +9,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
+from linkedin_mcp_server.core.exceptions import SelectorError
 from linkedin_mcp_server.core.interactions import click_element, type_text
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
@@ -135,8 +136,13 @@ def register_network_tools(mcp: FastMCP) -> None:
                 page, "https://www.linkedin.com/mynetwork/invitation-manager/"
             )
 
-            rows = await SELECTORS["network"]["invitation_rows"].resolve(page)
             invitations: list[dict[str, Any]] = []
+            try:
+                rows = await SELECTORS["network"]["invitation_rows"].resolve(page)
+            except SelectorError:
+                # No invitation rows on the page — zero pending invitations.
+                logger.debug("invitation_rows selector found nothing; returning empty list")
+                return {"invitations": []}
             total_rows = await rows.count()
 
             for idx in range(total_rows):
