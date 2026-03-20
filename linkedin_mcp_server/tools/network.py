@@ -170,7 +170,9 @@ def register_network_tools(mcp: FastMCP) -> None:
             if rows is None:
                 # Fallback: listitems that contain an Accept or Ignore button
                 rows = page.get_by_role("listitem").filter(
-                    has=page.get_by_role("button", name=re.compile(r"Accept|Ignore", re.IGNORECASE))
+                    has=page.get_by_role(
+                        "button", name=re.compile(r"Accept|Ignore", re.IGNORECASE)
+                    )
                 )
                 try:
                     if await rows.count() == 0:

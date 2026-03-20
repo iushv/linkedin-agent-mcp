@@ -678,8 +678,14 @@ def register_feed_tools(mcp: FastMCP) -> None:
             stagnant_scrolls = 0
             last_total = 0
 
-            _feed_deadline = monotonic() + 45  # 45s budget keeps us inside 60s MCP ceiling
-            while len(posts) < safe_count and stagnant_scrolls < 2 and monotonic() < _feed_deadline:
+            _feed_deadline = (
+                monotonic() + 45
+            )  # 45s budget keeps us inside 60s MCP ceiling
+            while (
+                len(posts) < safe_count
+                and stagnant_scrolls < 2
+                and monotonic() < _feed_deadline
+            ):
                 cards = await _resolve_post_cards(page)
                 total_cards = await cards.count()
 

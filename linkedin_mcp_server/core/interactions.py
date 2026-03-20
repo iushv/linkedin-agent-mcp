@@ -88,9 +88,7 @@ async def wait_for_modal(page: Page, timeout: int = 8000) -> None:
     """Wait for a LinkedIn modal or composer overlay to become visible."""
     # LinkedIn uses .artdeco-modal for traditional dialogs and
     # .share-creation-state / [role="dialog"] for the post composer overlay.
-    modal = page.locator(
-        ".artdeco-modal, .share-creation-state, [role='dialog']"
-    ).first
+    modal = page.locator(".artdeco-modal, .share-creation-state, [role='dialog']").first
     try:
         await modal.wait_for(state="visible", timeout=timeout)
     except PlaywrightTimeoutError as exc:

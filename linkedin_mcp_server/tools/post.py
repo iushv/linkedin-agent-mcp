@@ -88,7 +88,9 @@ async def _open_composer(page: Any) -> None:
         else:
             logger.debug("Trigger has no bounding box — trying next strategy")
     except Exception as exc:
-        logger.debug("Selector chain trigger failed (%s), trying broader selectors", exc)
+        logger.debug(
+            "Selector chain trigger failed (%s), trying broader selectors", exc
+        )
 
     # Strategy 2: Find any element with "Start a post" text and click it
     if not opened:
