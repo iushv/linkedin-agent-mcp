@@ -136,10 +136,13 @@ def _normalize_post_url(href: str | None) -> str | None:
 
 
 async def _extract_post_url(card: Any) -> str | None:
+    # Try specific post-permalink selectors first, then scan all anchors
     for selector in (
         "a[href*='/feed/update/']",
         "a[href*='/posts/']",
         "a[href*='/activity-']",
+        "a[href*='urn%3Ali%3Aactivity']",
+        "a[data-tracking-control-name*='update']",
     ):
         locator = card.locator(selector)
         try:
@@ -153,6 +156,44 @@ async def _extract_post_url(card: Any) -> str | None:
         normalized = _normalize_post_url(href)
         if normalized:
             return normalized
+
+    # Fallback: scan all anchors in the card for any post-like URL
+    try:
+        all_links = card.locator("a[href]")
+        count = min(await all_links.count(), 15)
+        for i in range(count):
+            try:
+                href = await all_links.nth(i).get_attribute(
+                    "href", timeout=_POST_URL_ATTR_TIMEOUT_MS
+                )
+            except Exception:
+                continue
+            normalized = _normalize_post_url(href)
+            if normalized:
+                return normalized
+    except Exception:
+        pass
+    return None
+
+
+async def _extract_author_from_card(card: Any) -> str | None:
+    """Extract the author name from a feed card's DOM structure."""
+    # LinkedIn uses these selectors for the author name element
+    for selector in (
+        ".update-components-actor__name span[dir='ltr']",
+        ".update-components-actor__name",
+        "[data-tracking-control-name*='actor'] span",
+        ".feed-shared-actor__name",
+        ".feed-shared-actor__title",
+    ):
+        try:
+            loc = card.locator(selector).first
+            if await loc.count() > 0:
+                name = await loc.inner_text(timeout=500)
+                if name and name.strip():
+                    return name.strip()
+        except Exception:
+            continue
     return None
 
 
@@ -668,21 +709,25 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 logger.warning("Feed posts did not hydrate within 8s")
 
             posts: list[dict[str, Any]] = []
+            seen_fingerprints: set[str] = set()
             stagnant_scrolls = 0
             last_total = 0
+            processed_idx = 0
 
             _feed_deadline = (
                 monotonic() + 45
             )  # 45s budget keeps us inside 60s MCP ceiling
             while (
                 len(posts) < safe_count
-                and stagnant_scrolls < 2
+                and stagnant_scrolls < 3
                 and monotonic() < _feed_deadline
             ):
                 cards = await _resolve_post_cards(page)
                 total_cards = await cards.count()
 
-                for idx in range(len(posts), min(total_cards, safe_count)):
+                for idx in range(processed_idx, total_cards):
+                    if len(posts) >= safe_count:
+                        break
                     card = cards.nth(idx)
                     try:
                         text = await card.inner_text(timeout=2500)
@@ -692,15 +737,26 @@ def register_feed_tools(mcp: FastMCP) -> None:
                     if not text or not text.strip():
                         continue
 
-                    # Skip non-post cards (ads, suggestions, chrome) — real
-                    # posts have substantial text or engagement keywords.
+                    # Skip non-post cards (ads, suggestions, chrome)
                     stripped = text.strip()
                     if len(stripped) < 50:
                         continue
 
+                    # Dedup by text fingerprint (first 200 chars)
+                    fingerprint = stripped[:200]
+                    if fingerprint in seen_fingerprints:
+                        continue
+                    seen_fingerprints.add(fingerprint)
+
+                    # Extract author from DOM (not text) and post URL
                     post = _extract_post_from_text(text)
+                    dom_author = await _extract_author_from_card(card)
+                    if dom_author:
+                        post["author"] = dom_author
                     post["url"] = await _extract_post_url(card)
                     posts.append(post)
+
+                processed_idx = total_cards
 
                 if len(posts) >= safe_count:
                     break

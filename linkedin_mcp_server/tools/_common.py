@@ -323,14 +323,15 @@ async def run_write_tool(
         browser_lock_acquired = True
         await ensure_authenticated()
         await check_session_health()
-        await require_confirmation(action, confirm)
-
-        await acquire_write_lock(action)
-        lock_acquired = True
 
         if dry_run:
             result = write_dry_run(action, description)
             return result
+
+        await require_confirmation(action, confirm)
+
+        await acquire_write_lock(action)
+        lock_acquired = True
 
         await check_quota(action)
 
