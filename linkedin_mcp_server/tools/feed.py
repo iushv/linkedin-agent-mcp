@@ -300,7 +300,7 @@ def _looks_like_analytics_card_text(text: str) -> bool:
 
 async def _resolve_post_cards(page: Any) -> Any:
     """Resolve feed post containers with a DOM-fallback for the current LinkedIn feed."""
-    deadline = monotonic() + 6  # 6s cap keeps browse_feed inside 60s Cowork ceiling
+    deadline = monotonic() + 4  # 4s cap — upstream hydration wait already ran
     last_exc: Exception | None = None
 
     while monotonic() < deadline:
@@ -655,24 +655,17 @@ def register_feed_tools(mcp: FastMCP) -> None:
                     pass
 
             # Wait for actual feed posts to hydrate (not just <main>).
-            # LinkedIn's React SPA renders <main> immediately but post content
-            # arrives asynchronously — can take 5-12s on slow connections.
-            _post_hydration_selectors = (
-                "article",
-                "div.feed-shared-update-v2",
-                "div.occludable-update",
-                "[data-view-name='feed-full-update']",
-                "[role='listitem'] h2:has-text('Feed post')",
-            )
-            for sel in _post_hydration_selectors:
-                try:
-                    await page.wait_for_selector(sel, timeout=12000)
-                    logger.debug("Feed hydrated via: %s", sel)
-                    break
-                except Exception:
-                    continue
-            else:
-                logger.warning("Feed posts did not hydrate within timeout")
+            # Use a single combined selector — sequential 12s waits blew the 60s budget.
+            try:
+                await page.wait_for_selector(
+                    "article, "
+                    "div.feed-shared-update-v2, "
+                    "div.occludable-update, "
+                    "[data-view-name='feed-full-update']",
+                    timeout=8000,
+                )
+            except Exception:
+                logger.warning("Feed posts did not hydrate within 8s")
 
             posts: list[dict[str, Any]] = []
             stagnant_scrolls = 0
