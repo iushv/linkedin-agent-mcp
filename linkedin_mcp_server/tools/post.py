@@ -152,6 +152,72 @@ async def _open_composer(page: Any) -> None:
         await wait_for_modal(page)
 
 
+async def _click_submit(page: Any) -> None:
+    """Click the composer's submit button, scoped to the modal/overlay.
+
+    The generic Role("button", "Post") selector matches feed-item buttons
+    before the modal's submit.  We scope to the dialog container and use
+    force=True to bypass the #interop-outlet overlay that intercepts
+    pointer events.
+    """
+    # Scope to the active modal / share-creation dialog
+    modal_scopes = (
+        "[role='dialog']",
+        ".share-creation-state",
+        ".artdeco-modal",
+    )
+    for scope_sel in modal_scopes:
+        scope = page.locator(scope_sel).first
+        try:
+            if await scope.count() == 0:
+                continue
+        except Exception:
+            continue
+
+        # Try specific selectors within the modal
+        for btn_sel in (
+            "button.share-actions__primary-action",
+            "button[aria-label='Post' i]",
+        ):
+            btn = scope.locator(btn_sel).first
+            try:
+                if await btn.count() > 0:
+                    await btn.click(force=True, timeout=5000)
+                    return
+            except Exception:
+                continue
+
+        # Fallback: find button with exact text "Post" inside the modal
+        btn = scope.get_by_role("button", name="Post", exact=True).first
+        try:
+            if await btn.count() > 0:
+                await btn.click(force=True, timeout=5000)
+                return
+        except Exception:
+            pass
+
+    # Last resort: JS click on the submit button inside the modal
+    logger.debug("Scoped submit selectors failed, trying JS click")
+    await page.evaluate(
+        """(() => {
+            const scopes = [
+                '[role="dialog"]',
+                '.share-creation-state',
+                '.artdeco-modal',
+            ];
+            for (const s of scopes) {
+                const modal = document.querySelector(s);
+                if (!modal) continue;
+                const btn = modal.querySelector(
+                    'button.share-actions__primary-action, '
+                    + 'button[aria-label="Post" i]'
+                );
+                if (btn) { btn.click(); return; }
+            }
+        })()"""
+    )
+
+
 async def _set_visibility_if_needed(page: Any, visibility: str) -> None:
     normalized = visibility.strip().lower()
     if normalized == "anyone":
@@ -216,7 +282,7 @@ def register_post_tools(mcp: FastMCP) -> None:
                 await upload_file(page, SELECTORS["common"]["file_input"], image_path)
 
             await _set_visibility_if_needed(page, visibility)
-            await click_element(page, SELECTORS["post_composer"]["submit"])
+            await _click_submit(page)
             await detect_rate_limit_post_action(page)
             await dismiss_modal(page)
 
