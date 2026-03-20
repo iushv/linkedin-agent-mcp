@@ -689,8 +689,18 @@ def register_feed_tools(mcp: FastMCP) -> None:
                     except Exception:
                         continue
 
-                    if text and text.strip():
-                        posts.append(_extract_post_from_text(text))
+                    if not text or not text.strip():
+                        continue
+
+                    # Skip non-post cards (ads, suggestions, chrome) — real
+                    # posts have substantial text or engagement keywords.
+                    stripped = text.strip()
+                    if len(stripped) < 50:
+                        continue
+
+                    post = _extract_post_from_text(text)
+                    post["url"] = await _extract_post_url(card)
+                    posts.append(post)
 
                 if len(posts) >= safe_count:
                     break

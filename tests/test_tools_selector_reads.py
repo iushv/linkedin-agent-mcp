@@ -104,10 +104,11 @@ class TestBrowseFeed:
         )
 
     async def test_browse_feed_success(self, monkeypatch):
+        # Cards must be > 50 chars to pass the short-card filter
         card_texts = [
-            "Author One\nSome interesting post\n5 reactions\n2 comments\n2h ago",
-            "Author Two\nAnother post\n10 reactions\n1d ago",
-            "Author Three\nThird post content",
+            "Author One\nSome interesting post about AI and the future of technology with lots of detail\n5 reactions\n2 comments\n2h ago",
+            "Author Two\nAnother post sharing insights on machine learning trends and industry news\n10 reactions\n1d ago",
+            "Author Three\nThird post content with enough words to be a real post and not just UI chrome noise",
         ]
         loc = MagicMock()
         loc.count = AsyncMock(return_value=3)
@@ -118,6 +119,10 @@ class TestBrowseFeed:
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed._extract_post_url",
+            AsyncMock(return_value=None),
         )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
@@ -131,6 +136,7 @@ class TestBrowseFeed:
         assert result["status"] == "success"
         assert len(result["data"]["posts"]) == 3
         assert result["data"]["posts"][0]["author"] == "Author One"
+        assert "url" in result["data"]["posts"][0]
 
     async def test_browse_feed_count_clamping(self, monkeypatch):
         loc = MagicMock()
