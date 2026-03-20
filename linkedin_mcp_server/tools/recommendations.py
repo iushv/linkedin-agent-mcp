@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -19,6 +20,8 @@ from linkedin_mcp_server.tools.job import (
     _first_locator_text,
     _normalize_job_url,
 )
+
+logger = logging.getLogger(__name__)
 
 _RECOMMENDATION_TITLE_SELECTORS = (
     ".job-card-list__title",
@@ -52,6 +55,13 @@ _ANCILLARY_JOB_LINE_RE = re.compile(
     r"(actively reviewing applicants|company alumni works here|promoted|easy apply|applied|resume matched)",
     re.IGNORECASE,
 )
+# Patterns that indicate a non-job card (profile / people-you-may-know / company spotlight)
+_NON_JOB_CARD_RE = re.compile(
+    r"(\bconnections?\b|\bfollowers?\b|\bpeople\s+you\s+may\s+know\b"
+    r"|\bpeople\s+also\s+viewed\b|\bwho\s+viewed\b|\bmutual\b"
+    r"|\bcompany\s+spotlight\b|\bschool\b.*\balumni\b)",
+    re.IGNORECASE,
+)
 
 
 def _clean_recommendation_line(line: str) -> str:
@@ -63,6 +73,11 @@ def _clean_recommendation_line(line: str) -> str:
 
 def _normalize_recommendation_title(title: str) -> str:
     return _VERIFIED_JOB_RE.sub("", title).strip()
+
+
+def _is_non_job_line(line: str) -> bool:
+    """Return True if a line looks like it belongs to a profile/people card."""
+    return bool(_NON_JOB_CARD_RE.search(line))
 
 
 def _parse_job_recommendations_text(
@@ -88,6 +103,9 @@ def _parse_job_recommendations_text(
         if not line:
             continue
         if line.lower() in _RECOMMENDATION_NOISE:
+            continue
+        # Skip lines that look like profile/people cards
+        if _is_non_job_line(line):
             continue
         filtered.append(line)
 
@@ -212,6 +230,23 @@ def register_recommendation_tools(mcp: FastMCP) -> None:
                 rows = await SELECTORS["jobs"]["recommendation_cards"].resolve(page_obj)
                 for idx in range(await rows.count()):
                     row = rows.nth(idx)
+
+                    # --- B10 fix: extract the job link first ---------------
+                    href = await _first_locator_href(
+                        row, _RECOMMENDATION_LINK_SELECTORS
+                    )
+                    job_url = _normalize_job_url(href)
+
+                    # --- B9 fix: skip non-job cards -----------------------
+                    # Cards without a /jobs/view/ link are profile cards,
+                    # company spotlights, or "people you may know" ads.
+                    if not job_url:
+                        logger.debug(
+                            "Skipping recommendation card %d: no /jobs/view/ link",
+                            idx,
+                        )
+                        continue
+
                     title = await _first_locator_text(
                         row, _RECOMMENDATION_TITLE_SELECTORS
                     )
@@ -221,10 +256,7 @@ def register_recommendation_tools(mcp: FastMCP) -> None:
                     location_value = await _first_locator_text(
                         row, _RECOMMENDATION_LOCATION_SELECTORS
                     )
-                    href = await _first_locator_href(
-                        row, _RECOMMENDATION_LINK_SELECTORS
-                    )
-                    job_url = _normalize_job_url(href)
+
                     job = _build_job_result(
                         title=title,
                         company=company,

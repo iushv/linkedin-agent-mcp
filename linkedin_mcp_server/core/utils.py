@@ -212,24 +212,38 @@ async def scroll_to_bottom(
 async def handle_modal_close(page: Page) -> bool:
     """Close any popup modals that might be blocking content.
 
+    Checks multiple button patterns in priority order: artdeco dismiss,
+    aria-label variants, and common label text ("Got it", "OK", etc.).
+    Also handles native ``<dialog>`` elements and ``[role="dialog"]`` overlays.
+
     Returns:
         True if a modal was closed, False otherwise
     """
-    try:
-        close_button = page.locator(
-            'button[aria-label="Dismiss"], '
-            'button[aria-label="Close"], '
-            "button.artdeco-modal__dismiss"
-        ).first
+    # Priority-ordered close-button selectors (most specific first)
+    close_selectors = (
+        "button.artdeco-modal__dismiss",
+        'button[aria-label="Dismiss"]',
+        'button[aria-label="Close"]',
+        '[role="dialog"] button[aria-label="Dismiss"]',
+        '[role="dialog"] button[aria-label="Close"]',
+        'dialog[open] button[aria-label="Close"]',
+        "button:has-text('Got it')",
+        "button:has-text('OK')",
+        "button:has-text('Not now')",
+    )
 
-        if await close_button.is_visible(timeout=1000):
-            await close_button.click()
-            await asyncio.sleep(0.5)
-            logger.debug("Closed modal")
-            return True
-    except PlaywrightTimeoutError:
-        pass
-    except Exception as e:
-        logger.debug("Error closing modal: %s", e)
+    for selector in close_selectors:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=500):
+                await btn.click()
+                await asyncio.sleep(0.5)
+                logger.debug("Closed modal via %s", selector)
+                return True
+        except PlaywrightTimeoutError:
+            continue
+        except Exception as e:
+            logger.debug("Error trying modal close selector %s: %s", selector, e)
+            continue
 
     return False

@@ -279,6 +279,11 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
             Text("Unread"),
             CSS("li.msg-conversations-container__convo-item"),
             CSS("li.msg-conversation-listitem"),
+            CSS("li.msg-convo-wrapper"),
+            CSS("li[class*='msg-conversation']"),
+            CSS("div.msg-conversations-container__conversations-list li"),
+            CSS("ul.msg-conversations-container__conversations-list > li"),
+            CSS("section.messaging li[data-control-name]"),
         ),
         "message_input": chain(
             "messaging_input",
@@ -295,6 +300,11 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
             "messaging_thread_messages",
             CSS("li.msg-s-message-list__event"),
             CSS("li.msg-conversation-card"),
+            CSS("li.msg-s-event-listitem"),
+            CSS("li[class*='msg-s-message-list']"),
+            CSS("div.msg-s-message-list-container li"),
+            CSS("ul.msg-s-message-list > li"),
+            CSS("section.msg-s-message-list-container li[class*='msg-s']"),
         ),
     },
     "network": {

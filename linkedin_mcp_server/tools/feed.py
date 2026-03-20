@@ -38,15 +38,28 @@ _ACTIVITY_POST_CARD_SELECTORS = (
 
 
 def _extract_metric(text: str, phrase: str) -> int | None:
+    # Tight patterns: number and phrase on the same or adjacent line
     pattern_before = re.compile(rf"([\d,.kKmM]+)\s+{re.escape(phrase)}", re.IGNORECASE)
     pattern_after = re.compile(
         rf"{re.escape(phrase)}\s*:?\s*([\d,.kKmM]+)", re.IGNORECASE
     )
 
     match = pattern_before.search(text) or pattern_after.search(text)
-    if not match:
-        return None
-    return parse_count(match.group(1))
+    if match:
+        return parse_count(match.group(1))
+
+    # Loose pattern: number on one line, phrase within 2 lines below.
+    # Handles LinkedIn dashboard widgets where DOM renders them in separate
+    # elements, producing ``181\nDiscover who...\nprofile views``.
+    loose_before = re.compile(
+        rf"([\d,.kKmM]+)\s*\n(?:[^\n]{{0,80}}\n){{0,2}}\s*{re.escape(phrase)}",
+        re.IGNORECASE,
+    )
+    m = loose_before.search(text)
+    if m:
+        return parse_count(m.group(1))
+
+    return None
 
 
 def _extract_time_ago(text: str) -> str | None:
@@ -66,6 +79,61 @@ def _extract_profile_analytics_from_text(text: str) -> dict[str, int | None]:
         "search_appearances": _extract_metric(text, "search appearances"),
         "post_impressions": _extract_metric(text, "post impressions"),
     }
+
+
+_NUM_IN_TEXT_RE = re.compile(r"([\d,.kKmM]+)")
+
+
+async def _extract_profile_analytics_from_dom(
+    page: Any,
+) -> dict[str, int | None]:
+    """Extract profile analytics from DOM elements (links, aria-labels).
+
+    LinkedIn's profile page renders the analytics widget with links like:
+      <a href="/me/profile-views/"> 181 profile views </a>
+    The number and label may be in separate child elements, so we read
+    aria-label first, then fall back to innerText of the link.
+    """
+    result: dict[str, int | None] = {
+        "profile_views": None,
+        "search_appearances": None,
+        "post_impressions": None,
+    }
+
+    _METRIC_LINK_MAP = [
+        ("a[href*='profile-views']", "profile_views"),
+        ("a[href*='search-appearances']", "search_appearances"),
+        ("a[href*='post-impressions']", "post_impressions"),
+        ("a[href*='post_impressions']", "post_impressions"),
+        # Broader fallbacks
+        ("[data-control-name*='profile_views']", "profile_views"),
+        ("[data-control-name*='search_appearances']", "search_appearances"),
+    ]
+
+    for selector, key in _METRIC_LINK_MAP:
+        if result[key] is not None:
+            continue
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            # Try aria-label first (may contain "181 profile views")
+            label = await loc.get_attribute("aria-label", timeout=500)
+            if label:
+                m = _NUM_IN_TEXT_RE.search(label)
+                if m:
+                    result[key] = parse_count(m.group(1))
+                    continue
+            # Fall back to innerText
+            text = await loc.inner_text(timeout=500)
+            if text:
+                m = _NUM_IN_TEXT_RE.search(text)
+                if m:
+                    result[key] = parse_count(m.group(1))
+        except Exception:
+            continue
+
+    return result
 
 
 def _extract_post_from_text(text: str) -> dict[str, Any]:
@@ -133,6 +201,69 @@ def _normalize_post_url(href: str | None) -> str | None:
         return None
 
     return f"https://www.linkedin.com{parsed.path}"
+
+
+async def _extract_engagement_from_card_dom(card: Any) -> dict[str, int | None]:
+    """Extract engagement metrics from DOM elements (aria-labels, social counts).
+
+    LinkedIn renders counts as icon + number without keyword text, so innerText
+    parsing misses them.  The social-actions bar exposes counts in aria-labels
+    like ``5 reactions`` or ``2 comments``.
+    """
+    reactions: int | None = None
+    comments: int | None = None
+    reposts: int | None = None
+    impressions: int | None = None
+
+    _ENGAGEMENT_SELECTORS: list[tuple[str, str]] = [
+        # aria-label on action buttons / social-counts spans
+        ("button[aria-label*='reaction' i]", "reactions"),
+        ("button[aria-label*='like' i]", "reactions"),
+        ("span[aria-label*='reaction' i]", "reactions"),
+        ("span.social-details-social-counts__reactions-count", "reactions"),
+        ("button[aria-label*='comment' i]", "comments"),
+        ("span[aria-label*='comment' i]", "comments"),
+        ("button[aria-label*='repost' i]", "reposts"),
+        ("span[aria-label*='repost' i]", "reposts"),
+        ("span[aria-label*='impression' i]", "impressions"),
+    ]
+
+    _NUM_RE = re.compile(r"([\d,.kKmM]+)")
+
+    for selector, metric_name in _ENGAGEMENT_SELECTORS:
+        # Skip if we already have a value for this metric
+        current = locals().get(metric_name)
+        if current is not None:
+            continue
+        try:
+            loc = card.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            label = await loc.get_attribute("aria-label", timeout=300)
+            if not label:
+                # Try inner text as fallback (for social-counts spans)
+                label = await loc.inner_text(timeout=300)
+            if label:
+                m = _NUM_RE.search(label)
+                if m:
+                    val = parse_count(m.group(1))
+                    if metric_name == "reactions" and reactions is None:
+                        reactions = val
+                    elif metric_name == "comments" and comments is None:
+                        comments = val
+                    elif metric_name == "reposts" and reposts is None:
+                        reposts = val
+                    elif metric_name == "impressions" and impressions is None:
+                        impressions = val
+        except Exception:
+            continue
+
+    return {
+        "reactions": reactions,
+        "comments": comments,
+        "reposts": reposts,
+        "impressions": impressions,
+    }
 
 
 async def _extract_post_url(card: Any) -> str | None:
@@ -593,6 +724,13 @@ async def _extract_activity_posts_from_dom(
                 text,
                 url=await _extract_post_url(card),
             )
+
+            # Supplement text-based metrics with DOM-based extraction
+            dom_metrics = await _extract_engagement_from_card_dom(card)
+            for key in ("reactions", "comments", "reposts", "impressions"):
+                if item.get(key) is None and dom_metrics.get(key) is not None:
+                    item[key] = dom_metrics[key]
+
             if not _looks_like_analytics_card_text(text):
                 if not (
                     item["time_ago"]
@@ -868,44 +1006,57 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 )
 
             async def _read_dashboard() -> dict[str, int | None]:
-                await goto_and_check(page, "https://www.linkedin.com/dashboard/")
+                # Navigate to own profile — the analytics widget lives here.
+                # /dashboard/ often redirects or is empty on current LinkedIn.
+                await goto_and_check(page, "https://www.linkedin.com/in/me/")
 
+                try:
+                    await page.wait_for_selector("main", timeout=5000)
+                except Exception:
+                    logger.debug("Profile analytics: no <main> selector")
+
+                # --- DOM extraction: read aria-labels / link text in dashboard widget ---
+                result = await _extract_profile_analytics_from_dom(page)
+                if any(v is not None for v in result.values()):
+                    return result
+
+                # --- Text extraction from dashboard widget selectors ---
                 dashboard_text = ""
-                try:
-                    await page.wait_for_selector("main", timeout=3000)
-                except Exception:
-                    logger.debug("Dashboard analytics: no <main> selector")
-
-                try:
-                    widget = page.locator(
-                        "section, div[data-view-name*='dashboard'], main"
-                    ).first
-                    if await widget.count() > 0:
-                        dashboard_text = await widget.inner_text(timeout=2000)
-                except Exception:
-                    dashboard_text = ""
-
-                if not any(
-                    value is not None
-                    for value in _extract_profile_analytics_from_text(
-                        dashboard_text
-                    ).values()
-                ):
+                _DASHBOARD_SELECTORS = (
+                    "section:has(a[href*='profile-views'])",
+                    "section:has(a[href*='search-appearances'])",
+                    "div[data-view-name*='dashboard']",
+                    ".pv-dashboard-section",
+                    ".pv-deferred-area",
+                    "section.artdeco-card",
+                    "main",
+                )
+                for sel in _DASHBOARD_SELECTORS:
                     try:
-                        await page.evaluate(
-                            "window.scrollBy(0, document.body.scrollHeight * 0.5)"
-                        )
+                        widget = page.locator(sel).first
+                        if await widget.count() > 0:
+                            dashboard_text = await widget.inner_text(timeout=3000)
+                            parsed = _extract_profile_analytics_from_text(
+                                dashboard_text
+                            )
+                            if any(v is not None for v in parsed.values()):
+                                return parsed
                     except Exception:
-                        logger.debug("Dashboard analytics: scroll fallback unavailable")
-                    # Wait for body to stabilise (SPA redirect can transiently remove it)
-                    try:
-                        await page.wait_for_selector("body", timeout=8000)
-                    except Exception:
-                        logger.debug("Dashboard analytics: body wait timed out")
-                    body_text = await page.locator("body").inner_text(timeout=8000)
-                    return _extract_profile_analytics_from_text(body_text)
+                        continue
 
-                return _extract_profile_analytics_from_text(dashboard_text)
+                # --- Fallback: scroll down and read full body ---
+                try:
+                    await page.evaluate(
+                        "window.scrollBy(0, document.body.scrollHeight * 0.5)"
+                    )
+                except Exception:
+                    logger.debug("Profile analytics: scroll fallback unavailable")
+                try:
+                    await page.wait_for_selector("body", timeout=5000)
+                except Exception:
+                    logger.debug("Profile analytics: body wait timed out")
+                body_text = await page.locator("body").inner_text(timeout=8000)
+                return _extract_profile_analytics_from_text(body_text)
 
             result = await asyncio.wait_for(_read_dashboard(), timeout=25)
 

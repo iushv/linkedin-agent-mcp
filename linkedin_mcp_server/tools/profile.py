@@ -33,31 +33,86 @@ async def _read_current_headline(page: Any) -> str | None:
 
 
 async def _read_open_to_work_enabled(page: Any) -> bool:
+    # Check specific DOM selectors for the Open To Work badge/section
+    _OTW_SELECTORS = (
+        "#open-to-work-modal-header",
+        "section[class*='open-to-work']",
+        ".pv-open-to-work-section",
+        "div[class*='open-to-work']",
+        "button[aria-label*='Open to work' i]",
+        "[data-view-name*='open-to-work']",
+        # Profile photo overlay badge
+        "img[alt*='Open to work' i]",
+        "span.pv-member-badge--open-to-work",
+        ".pv-top-card--open-to-work",
+    )
+    for sel in _OTW_SELECTORS:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0:
+                return True
+        except Exception:
+            continue
+
+    # Fallback: check body text for the phrase in context
     try:
-        body_text = await page.locator("body").inner_text(timeout=1000)
+        # Read only the top card / profile header to avoid false positives
+        for scope_sel in (
+            "section.pv-top-card",
+            ".pv-top-card",
+            "main section:first-of-type",
+        ):
+            try:
+                scope = page.locator(scope_sel).first
+                if await scope.count() > 0:
+                    scope_text = await scope.inner_text(timeout=1500)
+                    lowered = scope_text.lower()
+                    if "open to work" in lowered or "show recruiters" in lowered:
+                        return True
+            except Exception:
+                continue
     except Exception:
-        return False
-    lowered = body_text.lower()
-    return "open to work" in lowered or "show recruiters" in lowered
+        pass
+
+    return False
 
 
 async def _read_featured_skills(page: Any) -> list[str]:
-    try:
-        rows = page.locator("span.pv-skill-category-entity__name-text")
-        count = min(await rows.count(), 5)
-    except Exception:
-        return []
-
-    skills: list[str] = []
-    for idx in range(count):
+    # Try multiple selectors — LinkedIn changes class names frequently
+    _SKILL_SELECTORS = (
+        "span.pv-skill-category-entity__name-text",
+        # Current LinkedIn skills detail page selectors
+        "li.pvs-list__paged-list-item .t-bold span",
+        "li.pvs-list__paged-list-item span[aria-hidden='true']",
+        "li.pvs-list__paged-list-item .mr1.t-bold span",
+        "div.pvs-list__outer-container li span.t-bold span",
+        # Broader fallbacks
+        "[class*='skill-category-entity'] span",
+        ".pvs-entity--padded .t-bold span",
+    )
+    for selector in _SKILL_SELECTORS:
         try:
-            text = await rows.nth(idx).inner_text(timeout=500)
+            rows = page.locator(selector)
+            count = min(await rows.count(), 10)
+            if count == 0:
+                continue
         except Exception:
             continue
-        value = " ".join(text.split())
-        if value:
-            skills.append(value)
-    return skills
+
+        skills: list[str] = []
+        for idx in range(count):
+            try:
+                text = await rows.nth(idx).inner_text(timeout=500)
+            except Exception:
+                continue
+            value = " ".join(text.split())
+            if value and len(value) > 1:
+                skills.append(value)
+
+        if skills:
+            return skills[:10]
+
+    return []
 
 
 async def _open_intro_editor(page: Any) -> None:
