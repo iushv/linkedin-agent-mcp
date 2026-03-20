@@ -78,6 +78,13 @@ class TestBrowseFeed:
     def _patch_deps(self, monkeypatch):
         self.page = MagicMock()
         self.page.evaluate = AsyncMock()
+        self.page.wait_for_selector = AsyncMock()
+        self.page.locator = MagicMock(
+            return_value=MagicMock(
+                first=MagicMock(count=AsyncMock(return_value=0)),
+                count=AsyncMock(return_value=0),
+            )
+        )
         browser = _mock_browser(self.page)
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.get_or_create_browser",
@@ -88,6 +95,12 @@ class TestBrowseFeed:
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.goto_and_check", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.ensure_page_healthy", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.handle_modal_close", AsyncMock()
         )
 
     async def test_browse_feed_success(self, monkeypatch):
@@ -612,7 +625,9 @@ class TestGetPendingInvitations:
             "linkedin_mcp_server.tools.network.goto_and_check", AsyncMock()
         )
 
-    def _make_invitation_rows(self, monkeypatch, rows):
+    def _make_invitation_rows(self, rows):
+        """Set up page.locator to return invitation card rows."""
+
         def make_row(idx):
             text, href = rows[idx]
             m = MagicMock()
@@ -628,20 +643,22 @@ class TestGetPendingInvitations:
             )
             return m
 
-        loc = MagicMock()
-        loc.count = AsyncMock(return_value=len(rows))
-        loc.nth = lambda idx: make_row(idx)
+        card_loc = MagicMock()
+        card_loc.count = AsyncMock(return_value=len(rows))
+        card_loc.nth = lambda idx: make_row(idx)
 
-        chain_mock = MagicMock()
-        chain_mock.resolve = AsyncMock(return_value=loc)
-        monkeypatch.setattr(
-            "linkedin_mcp_server.tools.network.SELECTORS",
-            {"network": {"invitation_rows": chain_mock}},
-        )
+        empty_loc = MagicMock()
+        empty_loc.count = AsyncMock(return_value=0)
 
-    async def test_invitations_success(self, monkeypatch):
+        def locator_router(sel):
+            if "invitation-card" in sel:
+                return card_loc
+            return empty_loc
+
+        self.page.locator = MagicMock(side_effect=locator_router)
+
+    async def test_invitations_success(self):
         self._make_invitation_rows(
-            monkeypatch,
             [
                 ("Jane Doe\nSoftware Engineer\n5 mutual connections", "/in/janedoe"),
                 ("Bob Smith\nDesigner", "/in/bobsmith"),
@@ -664,9 +681,8 @@ class TestGetPendingInvitations:
         assert invitations[0]["invitation_index"] == 0
         assert invitations[0]["profile_url"] == "https://www.linkedin.com/in/janedoe"
 
-    async def test_invitations_relative_href(self, monkeypatch):
+    async def test_invitations_relative_href(self):
         self._make_invitation_rows(
-            monkeypatch,
             [
                 ("User\nTitle", "/in/relative-path"),
             ],
@@ -682,15 +698,18 @@ class TestGetPendingInvitations:
         inv = result["data"]["invitations"][0]
         assert inv["profile_url"].startswith("https://www.linkedin.com")
 
-    async def test_invitations_selector_fail(self, monkeypatch):
-        chain_mock = MagicMock()
-        chain_mock.resolve = AsyncMock(
-            side_effect=_make_selector_error("network_invitation_rows")
-        )
-        monkeypatch.setattr(
-            "linkedin_mcp_server.tools.network.SELECTORS",
-            {"network": {"invitation_rows": chain_mock}},
-        )
+    async def test_invitations_zero_returns_empty(self):
+        """When no invitation-specific selectors match, return empty list."""
+        # page.locator returns 0-count for all selectors
+        empty_loc = MagicMock()
+        empty_loc.count = AsyncMock(return_value=0)
+        self.page.locator = MagicMock(return_value=empty_loc)
+        # get_by_role fallback also returns empty
+        filter_loc = MagicMock()
+        filter_loc.count = AsyncMock(return_value=0)
+        role_loc = MagicMock()
+        role_loc.filter = MagicMock(return_value=filter_loc)
+        self.page.get_by_role = MagicMock(return_value=role_loc)
 
         from linkedin_mcp_server.tools.network import register_network_tools
         from fastmcp import FastMCP
@@ -699,4 +718,5 @@ class TestGetPendingInvitations:
         register_network_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "get_pending_invitations")
         result = await tool_fn()
-        assert result["status"] == "error"
+        assert result["status"] == "success"
+        assert result["data"]["invitations"] == []

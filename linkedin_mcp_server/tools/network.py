@@ -9,7 +9,6 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from linkedin_mcp_server.core.exceptions import SelectorError
 from linkedin_mcp_server.core.interactions import click_element, type_text
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
@@ -137,35 +136,75 @@ def register_network_tools(mcp: FastMCP) -> None:
             )
 
             invitations: list[dict[str, Any]] = []
+
+            # Detect empty state — LinkedIn shows this when there are no invitations
+            empty_markers = page.locator(
+                "text='No pending invitations', "
+                "text='No new invitations', "
+                "h2:has-text('No pending invitations')"
+            )
             try:
-                rows = await SELECTORS["network"]["invitation_rows"].resolve(page)
-            except SelectorError:
-                # No invitation rows on the page — zero pending invitations.
-                logger.debug("invitation_rows selector found nothing; returning empty list")
-                return {"invitations": []}
-            total_rows = await rows.count()
+                if await empty_markers.count() > 0:
+                    logger.debug("Invitation manager shows empty state")
+                    return {"invitations": []}
+            except Exception:
+                pass
+
+            # Use invitation-specific selectors before falling back to generic listitem.
+            # The chain's Role("listitem") is too broad — filter to rows that contain
+            # Accept/Ignore buttons, which only appear on invitation cards.
+            rows = None
+            for sel in (
+                "li.invitation-card",
+                "li.mn-invitation-manager__invitation-card",
+                "[data-view-name='invitation-card']",
+            ):
+                loc = page.locator(sel)
+                try:
+                    if await loc.count() > 0:
+                        rows = loc
+                        break
+                except Exception:
+                    continue
+
+            if rows is None:
+                # Fallback: listitems that contain an Accept or Ignore button
+                rows = page.get_by_role("listitem").filter(
+                    has=page.get_by_role("button", name=re.compile(r"Accept|Ignore", re.IGNORECASE))
+                )
+                try:
+                    if await rows.count() == 0:
+                        logger.debug("No invitation rows found; returning empty list")
+                        return {"invitations": []}
+                except Exception:
+                    return {"invitations": []}
+
+            total_rows = min(await rows.count(), safe_limit)
 
             for idx in range(total_rows):
                 row = rows.nth(idx)
-                anchor = row.locator('a[href*="/in/"]').first
-                if await anchor.count() == 0:
+                try:
+                    anchor = row.locator('a[href*="/in/"]').first
+                    if await anchor.count() == 0:
+                        continue
+
+                    text = await row.inner_text(timeout=2000)
+                    name, headline = _extract_name_headline(text)
+                    href = await anchor.get_attribute("href")
+                    if href and href.startswith("/"):
+                        href = f"https://www.linkedin.com{href}"
+
+                    invitations.append(
+                        {
+                            "name": name,
+                            "profile_url": href,
+                            "headline": headline,
+                            "mutual_connections": _extract_mutual_connections(text),
+                            "invitation_index": idx,
+                        }
+                    )
+                except Exception:
                     continue
-
-                text = await row.inner_text(timeout=2000)
-                name, headline = _extract_name_headline(text)
-                href = await anchor.get_attribute("href")
-                if href and href.startswith("/"):
-                    href = f"https://www.linkedin.com{href}"
-
-                invitations.append(
-                    {
-                        "name": name,
-                        "profile_url": href,
-                        "headline": headline,
-                        "mutual_connections": _extract_mutual_connections(text),
-                        "invitation_index": idx,
-                    }
-                )
                 if len(invitations) >= safe_limit:
                     break
 

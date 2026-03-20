@@ -642,6 +642,7 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 "button[data-tracking-control-name='cookie-policy-banner-accept']",
                 "button:has-text('Accept cookies')",
                 "button:has-text('Accept all')",
+                "button:has-text('Accept & continue')",
             ):
                 try:
                     btn = page.locator(consent_sel).first
@@ -652,6 +653,26 @@ def register_feed_tools(mcp: FastMCP) -> None:
                         break
                 except Exception:
                     pass
+
+            # Wait for actual feed posts to hydrate (not just <main>).
+            # LinkedIn's React SPA renders <main> immediately but post content
+            # arrives asynchronously — can take 5-12s on slow connections.
+            _post_hydration_selectors = (
+                "article",
+                "div.feed-shared-update-v2",
+                "div.occludable-update",
+                "[data-view-name='feed-full-update']",
+                "[role='listitem'] h2:has-text('Feed post')",
+            )
+            for sel in _post_hydration_selectors:
+                try:
+                    await page.wait_for_selector(sel, timeout=12000)
+                    logger.debug("Feed hydrated via: %s", sel)
+                    break
+                except Exception:
+                    continue
+            else:
+                logger.warning("Feed posts did not hydrate within timeout")
 
             posts: list[dict[str, Any]] = []
             stagnant_scrolls = 0
