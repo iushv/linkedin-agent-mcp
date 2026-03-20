@@ -171,6 +171,17 @@ class MockPageBuilder:
 
         page.get_by_text = MagicMock(side_effect=_get_by_text)
 
+        # page.evaluate
+        page.evaluate = AsyncMock(return_value=None)
+
+        # page.wait_for_selector
+        page.wait_for_selector = AsyncMock(return_value=None)
+
+        # page.mouse (for real-coordinate click strategies)
+        page.mouse = MagicMock()
+        page.mouse.move = AsyncMock()
+        page.mouse.click = AsyncMock()
+
         # Attach log for assertions
         page.call_log = log
 

@@ -16,7 +16,12 @@ from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core import handle_modal_close
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.scraping.extractor import LinkedInExtractor
-from linkedin_mcp_server.tools._common import goto_and_check, parse_count, run_read_tool
+from linkedin_mcp_server.tools._common import (
+    ensure_page_healthy,
+    goto_and_check,
+    parse_count,
+    run_read_tool,
+)
 
 logger = logging.getLogger(__name__)
 _ACTIVITY_CARD_TEXT_TIMEOUT_MS = 800
@@ -33,15 +38,28 @@ _ACTIVITY_POST_CARD_SELECTORS = (
 
 
 def _extract_metric(text: str, phrase: str) -> int | None:
+    # Tight patterns: number and phrase on the same or adjacent line
     pattern_before = re.compile(rf"([\d,.kKmM]+)\s+{re.escape(phrase)}", re.IGNORECASE)
     pattern_after = re.compile(
         rf"{re.escape(phrase)}\s*:?\s*([\d,.kKmM]+)", re.IGNORECASE
     )
 
     match = pattern_before.search(text) or pattern_after.search(text)
-    if not match:
-        return None
-    return parse_count(match.group(1))
+    if match:
+        return parse_count(match.group(1))
+
+    # Loose pattern: number on one line, phrase within 2 lines below.
+    # Handles LinkedIn dashboard widgets where DOM renders them in separate
+    # elements, producing ``181\nDiscover who...\nprofile views``.
+    loose_before = re.compile(
+        rf"([\d,.kKmM]+)\s*\n(?:[^\n]{{0,80}}\n){{0,2}}\s*{re.escape(phrase)}",
+        re.IGNORECASE,
+    )
+    m = loose_before.search(text)
+    if m:
+        return parse_count(m.group(1))
+
+    return None
 
 
 def _extract_time_ago(text: str) -> str | None:
@@ -57,10 +75,78 @@ def _extract_time_ago(text: str) -> str | None:
 
 def _extract_profile_analytics_from_text(text: str) -> dict[str, int | None]:
     return {
-        "profile_views": _extract_metric(text, "profile views"),
+        "profile_views": (
+            _extract_metric(text, "profile viewers")
+            or _extract_metric(text, "profile views")
+        ),
         "search_appearances": _extract_metric(text, "search appearances"),
         "post_impressions": _extract_metric(text, "post impressions"),
     }
+
+
+_NUM_IN_TEXT_RE = re.compile(r"([\d,.kKmM]+)")
+
+
+async def _extract_profile_analytics_from_dom(
+    page: Any,
+) -> dict[str, int | None]:
+    """Extract profile analytics from DOM elements (links, aria-labels).
+
+    LinkedIn's 2025 feed page renders analytics in a menu widget:
+      <a href="/me/profile-views/"> "Profile viewers 210" </a>
+      <a href="/analytics/creator/content/"> "Post impressions 3,475" </a>
+    The text format is "Label N" — the number is at the end.
+    """
+    result: dict[str, int | None] = {
+        "profile_views": None,
+        "search_appearances": None,
+        "post_impressions": None,
+    }
+
+    _METRIC_LINK_MAP = [
+        # 2025 feed page hrefs (from live DOM inspection)
+        ("a[href*='profile-views']", "profile_views"),
+        ("a[href*='search-appearances']", "search_appearances"),
+        ("a[href*='analytics/creator']", "post_impressions"),
+        # Legacy hrefs
+        ("a[href*='post-impressions']", "post_impressions"),
+        ("a[href*='post_impressions']", "post_impressions"),
+        # Data control names
+        ("[data-control-name*='profile_views']", "profile_views"),
+        ("[data-control-name*='search_appearances']", "search_appearances"),
+    ]
+
+    # Also try aria-label-based detection (e.g. div[aria-label="Profile viewers 210"])
+    _ARIA_LABEL_MAP = [
+        ("div[aria-label*='Profile viewer' i]", "profile_views"),
+        ("div[aria-label*='Post impression' i]", "post_impressions"),
+        ("div[aria-label*='Search appearance' i]", "search_appearances"),
+    ]
+
+    for selector, key in _METRIC_LINK_MAP + _ARIA_LABEL_MAP:
+        if result[key] is not None:
+            continue
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            # Try aria-label first
+            label = await loc.get_attribute("aria-label", timeout=500)
+            if label:
+                m = _NUM_IN_TEXT_RE.search(label)
+                if m:
+                    result[key] = parse_count(m.group(1))
+                    continue
+            # Fall back to innerText (e.g. "Profile viewers 210")
+            text = await loc.inner_text(timeout=500)
+            if text:
+                m = _NUM_IN_TEXT_RE.search(text)
+                if m:
+                    result[key] = parse_count(m.group(1))
+        except Exception:
+            continue
+
+    return result
 
 
 def _extract_post_from_text(text: str) -> dict[str, Any]:
@@ -130,24 +216,202 @@ def _normalize_post_url(href: str | None) -> str | None:
     return f"https://www.linkedin.com{parsed.path}"
 
 
+_ENGAGEMENT_TEXT_RE = re.compile(
+    r"([\d,.kKmM]+)\s+(reactions?|likes?|comments?|reposts?|impressions?)",
+    re.IGNORECASE,
+)
+
+
+async def _extract_engagement_from_card_dom(card: Any) -> dict[str, int | None]:
+    """Extract engagement metrics from DOM elements.
+
+    LinkedIn's 2025+ DOM renders engagement counts as plain text inside
+    generic elements (e.g. ``"21 reactions"``, ``"1 comment"``).  CSS
+    class names are obfuscated, so we scan all child text nodes and
+    also check aria-labels on buttons.
+    """
+    reactions: int | None = None
+    comments: int | None = None
+    reposts: int | None = None
+    impressions: int | None = None
+
+    _NUM_RE = re.compile(r"([\d,.kKmM]+)")
+
+    # Strategy 1: scan all text nodes in the card for "N reactions", "N comments", etc.
+    try:
+        card_text = await card.inner_text(timeout=1500)
+        if card_text:
+            for m in _ENGAGEMENT_TEXT_RE.finditer(card_text):
+                metric = m.group(2).lower().rstrip("s")
+                val = parse_count(m.group(1))
+                if metric in ("reaction", "like") and reactions is None:
+                    reactions = val
+                elif metric == "comment" and comments is None:
+                    comments = val
+                elif metric == "repost" and reposts is None:
+                    reposts = val
+                elif metric == "impression" and impressions is None:
+                    impressions = val
+    except Exception:
+        pass
+
+    # Strategy 2: check aria-labels on buttons (e.g. "Reaction button",
+    # "Open reactions menu") and text inside buttons/spans
+    _ARIA_SELECTORS: list[tuple[str, str]] = [
+        ("button[aria-label*='reaction' i]", "reactions"),
+        ("button[aria-label*='like' i]", "reactions"),
+        ("button[aria-label*='comment' i]", "comments"),
+        ("button[aria-label*='repost' i]", "reposts"),
+        ("span[aria-label*='impression' i]", "impressions"),
+    ]
+    for selector, metric_name in _ARIA_SELECTORS:
+        current = {
+            "reactions": reactions,
+            "comments": comments,
+            "reposts": reposts,
+            "impressions": impressions,
+        }.get(metric_name)
+        if current is not None:
+            continue
+        try:
+            loc = card.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            label = await loc.get_attribute("aria-label", timeout=300)
+            if not label:
+                label = await loc.inner_text(timeout=300)
+            if label:
+                m = _NUM_RE.search(label)
+                if m:
+                    val = parse_count(m.group(1))
+                    if metric_name == "reactions" and reactions is None:
+                        reactions = val
+                    elif metric_name == "comments" and comments is None:
+                        comments = val
+                    elif metric_name == "reposts" and reposts is None:
+                        reposts = val
+                    elif metric_name == "impressions" and impressions is None:
+                        impressions = val
+        except Exception:
+            continue
+
+    return {
+        "reactions": reactions,
+        "comments": comments,
+        "reposts": reposts,
+        "impressions": impressions,
+    }
+
+
 async def _extract_post_url(card: Any) -> str | None:
+    """Extract a permalink for the feed post from the card.
+
+    LinkedIn's 2025+ DOM no longer includes direct post URLs in feed
+    cards.  We try several strategies:
+    1. Explicit post-permalink selectors (legacy + new patterns)
+    2. data-urn attribute on the card or ancestors
+    3. Scan all anchors for post-like URLs
+    """
+    # Strategy 1: explicit post-permalink selectors
     for selector in (
         "a[href*='/feed/update/']",
         "a[href*='/posts/']",
         "a[href*='/activity-']",
+        "a[href*='urn%3Ali%3Aactivity']",
+        "a[data-tracking-control-name*='update']",
     ):
-        locator = card.locator(selector)
         try:
+            locator = card.locator(selector)
             if await locator.count() == 0:
                 continue
             href = await locator.first.get_attribute(
                 "href", timeout=_POST_URL_ATTR_TIMEOUT_MS
             )
+            normalized = _normalize_post_url(href)
+            if normalized:
+                return normalized
         except Exception:
             continue
-        normalized = _normalize_post_url(href)
-        if normalized:
-            return normalized
+
+    # Strategy 2: data-urn on card or parent (contains activity URN)
+    try:
+        urn = await card.get_attribute("data-urn", timeout=200)
+        if not urn:
+            # Check parent element
+            parent = card.locator("xpath=..")
+            if await parent.count() > 0:
+                urn = await parent.get_attribute("data-urn", timeout=200)
+        if urn and "activity" in urn:
+            # urn:li:activity:1234567890 → /feed/update/urn:li:activity:1234567890
+            return f"https://www.linkedin.com/feed/update/{urn}"
+    except Exception:
+        pass
+
+    # Strategy 3: scan all anchors for any post-like URL
+    try:
+        all_links = card.locator("a[href]")
+        count = min(await all_links.count(), 15)
+        for i in range(count):
+            try:
+                href = await all_links.nth(i).get_attribute(
+                    "href", timeout=_POST_URL_ATTR_TIMEOUT_MS
+                )
+            except Exception:
+                continue
+            normalized = _normalize_post_url(href)
+            if normalized:
+                return normalized
+    except Exception:
+        pass
+
+    return None
+
+
+_CONTROL_MENU_RE = re.compile(
+    r"(?:Open control menu for post by|Hide post by)\s+(.+)",
+    re.IGNORECASE,
+)
+
+
+async def _extract_author_from_card(card: Any) -> str | None:
+    """Extract the author name from a feed card's DOM structure.
+
+    LinkedIn's 2025+ DOM obfuscates CSS class names.  The most reliable
+    source for the author name is the control-menu button whose
+    aria-label reads ``"Open control menu for post by <Author Name>"``.
+    """
+    # Strategy 1: control menu / hide button aria-labels (most reliable)
+    for selector in (
+        "button[aria-label*='control menu for post by' i]",
+        "button[aria-label*='Hide post by' i]",
+    ):
+        try:
+            loc = card.locator(selector).first
+            if await loc.count() > 0:
+                label = await loc.get_attribute("aria-label", timeout=500)
+                if label:
+                    m = _CONTROL_MENU_RE.search(label)
+                    if m:
+                        return m.group(1).strip()
+        except Exception:
+            continue
+
+    # Strategy 2: legacy CSS selectors (pre-2025 LinkedIn)
+    for selector in (
+        ".update-components-actor__name span[dir='ltr']",
+        ".update-components-actor__name",
+        "[data-tracking-control-name*='actor'] span",
+        ".feed-shared-actor__name",
+        ".feed-shared-actor__title",
+    ):
+        try:
+            loc = card.locator(selector).first
+            if await loc.count() > 0:
+                name = await loc.inner_text(timeout=500)
+                if name and name.strip():
+                    return name.strip()
+        except Exception:
+            continue
     return None
 
 
@@ -294,44 +558,56 @@ def _looks_like_analytics_card_text(text: str) -> bool:
 
 
 async def _resolve_post_cards(page: Any) -> Any:
-    """Resolve feed post containers with a DOM-fallback for the current LinkedIn feed."""
-    deadline = monotonic() + 6  # 6s cap keeps browse_feed inside 60s Cowork ceiling
-    last_exc: Exception | None = None
+    """Resolve feed post containers for the current LinkedIn feed.
+
+    LinkedIn's 2025+ DOM uses obfuscated CSS class names.  Feed posts are
+    ``listitem`` elements that contain a heading reading ``"Feed post"``.
+    We prioritise this reliable structural pattern before falling back to
+    legacy class-based selectors.
+    """
+    deadline = monotonic() + 6  # 6s cap — give feed time to hydrate
 
     while monotonic() < deadline:
-        try:
-            return await SELECTORS["feed"]["post_cards"].resolve(page)
-        except Exception as exc:
-            last_exc = exc
-            logger.debug(
-                "Primary feed post selector failed, trying hydrated fallbacks",
-                exc_info=True,
-            )
-
-        fallback_candidates = [
-            page.locator("h2:has-text('Feed post')").locator(
-                "xpath=ancestor::*[@role='listitem'][1]"
-            ),
+        # Priority 1: listitem elements containing "Feed post" heading
+        # (reliable on 2025+ obfuscated LinkedIn DOM)
+        candidates = [
             page.get_by_role("listitem").filter(
-                has=page.locator("h2:has-text('Feed post')")
+                has=page.get_by_role("heading", name="Feed post")
             ),
-            page.locator("[data-view-name='feed-full-update']").locator(
-                "xpath=ancestor::*[@role='listitem'][1]"
-            ),
+            page.locator("[role='listitem']:has(h2:has-text('Feed post'))"),
         ]
+        for loc in candidates:
+            try:
+                if await loc.count() > 0:
+                    logger.debug(
+                        "Resolved %d feed cards via Feed post heading",
+                        await loc.count(),
+                    )
+                    return loc
+            except Exception:
+                pass
 
-        for fallback in fallback_candidates:
+        # Priority 2: legacy CSS selectors (pre-2025 LinkedIn)
+        try:
+            result = await SELECTORS["feed"]["post_cards"].resolve(page)
+            if await result.count() > 0:
+                return result
+        except Exception:
+            logger.debug("Legacy feed post selector chain failed", exc_info=True)
+
+        # Priority 3: broad semantic fallbacks
+        for sel in _ACTIVITY_POST_CARD_SELECTORS:
+            fallback = page.locator(sel)
             try:
                 if await fallback.count() > 0:
                     return fallback
             except Exception:
-                logger.debug("Feed post fallback locator failed", exc_info=True)
+                pass
 
         await asyncio.sleep(1)
 
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError("Could not resolve feed post cards")
+    # No cards found after deadline — return None so callers produce empty results
+    return None
 
 
 _TIME_AGO_RE = re.compile(r"^\d+\s*(?:m|h|d|w|mo|yr)s?$", re.IGNORECASE)
@@ -474,7 +750,7 @@ async def _resolve_activity_post_cards(page: Any) -> Any:
     while monotonic() < deadline:
         try:
             cards = await _resolve_post_cards(page)
-            if await cards.count() > 0:
+            if cards is not None and await cards.count() > 0:
                 return cards
         except Exception as exc:
             last_exc = exc
@@ -547,6 +823,13 @@ async def _extract_activity_posts_from_dom(
                 text,
                 url=await _extract_post_url(card),
             )
+
+            # Supplement text-based metrics with DOM-based extraction
+            dom_metrics = await _extract_engagement_from_card_dom(card)
+            for key in ("reactions", "comments", "reposts", "impressions"):
+                if item.get(key) is None and dom_metrics.get(key) is not None:
+                    item[key] = dom_metrics[key]
+
             if not _looks_like_analytics_card_text(text):
                 if not (
                     item["time_ago"]
@@ -623,32 +906,96 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 await ctx.report_progress(progress=0, total=100, message="Loading feed")
 
             await goto_and_check(page, "https://www.linkedin.com/feed/")
+            await ensure_page_healthy(page)
 
-            # Wait for SPA to render, dismiss any modal overlay
+            # Wait for SPA to render, dismiss any modal or consent overlay
             try:
                 await page.wait_for_selector("main", timeout=8000)
             except Exception:
                 logger.debug("No <main> on feed page; proceeding anyway")
             await handle_modal_close(page)
+            # Dismiss cookie/GDPR consent banners that block feed rendering
+            for consent_sel in (
+                "button[action-type='ACCEPT']",
+                "button[data-tracking-control-name='cookie-policy-banner-accept']",
+                "button:has-text('Accept cookies')",
+                "button:has-text('Accept all')",
+                "button:has-text('Accept & continue')",
+            ):
+                try:
+                    btn = page.locator(consent_sel).first
+                    if await btn.count() > 0:
+                        await btn.click(timeout=2000)
+                        logger.debug("Dismissed consent banner: %s", consent_sel)
+                        await asyncio.sleep(0.8)
+                        break
+                except Exception:
+                    pass
+
+            # Wait for actual feed posts to hydrate (not just <main>).
+            # Use a single combined selector — sequential 12s waits blew the 60s budget.
+            try:
+                await page.wait_for_selector(
+                    "article, "
+                    "div.feed-shared-update-v2, "
+                    "div.occludable-update, "
+                    "[data-view-name='feed-full-update']",
+                    timeout=8000,
+                )
+            except Exception:
+                logger.warning("Feed posts did not hydrate within 8s")
 
             posts: list[dict[str, Any]] = []
+            seen_fingerprints: set[str] = set()
             stagnant_scrolls = 0
             last_total = 0
+            processed_idx = 0
 
-            _feed_deadline = monotonic() + 45  # 45s budget keeps us inside 60s MCP ceiling
-            while len(posts) < safe_count and stagnant_scrolls < 2 and monotonic() < _feed_deadline:
+            _feed_deadline = (
+                monotonic() + 45
+            )  # 45s budget keeps us inside 60s MCP ceiling
+            while (
+                len(posts) < safe_count
+                and stagnant_scrolls < 3
+                and monotonic() < _feed_deadline
+            ):
                 cards = await _resolve_post_cards(page)
+                if cards is None:
+                    break
                 total_cards = await cards.count()
 
-                for idx in range(len(posts), min(total_cards, safe_count)):
+                for idx in range(processed_idx, total_cards):
+                    if len(posts) >= safe_count:
+                        break
                     card = cards.nth(idx)
                     try:
                         text = await card.inner_text(timeout=2500)
                     except Exception:
                         continue
 
-                    if text and text.strip():
-                        posts.append(_extract_post_from_text(text))
+                    if not text or not text.strip():
+                        continue
+
+                    # Skip non-post cards (ads, suggestions, chrome)
+                    stripped = text.strip()
+                    if len(stripped) < 50:
+                        continue
+
+                    # Dedup by text fingerprint (first 200 chars)
+                    fingerprint = stripped[:200]
+                    if fingerprint in seen_fingerprints:
+                        continue
+                    seen_fingerprints.add(fingerprint)
+
+                    # Extract author from DOM (not text) and post URL
+                    post = _extract_post_from_text(text)
+                    dom_author = await _extract_author_from_card(card)
+                    if dom_author:
+                        post["author"] = dom_author
+                    post["url"] = await _extract_post_url(card)
+                    posts.append(post)
+
+                processed_idx = total_cards
 
                 if len(posts) >= safe_count:
                     break
@@ -702,8 +1049,11 @@ def register_feed_tools(mcp: FastMCP) -> None:
 
             posts: list[dict[str, Any]] = []
             try:
-                posts = await _extract_activity_posts_from_dom(page, limit=safe_limit)
-            except Exception:
+                posts = await asyncio.wait_for(
+                    _extract_activity_posts_from_dom(page, limit=safe_limit),
+                    timeout=35.0,
+                )
+            except (asyncio.TimeoutError, Exception):
                 logger.warning(
                     "Recent activity DOM extraction failed; falling back to profile text",
                     exc_info=True,
@@ -756,45 +1106,85 @@ def register_feed_tools(mcp: FastMCP) -> None:
                     progress=0, total=100, message="Loading dashboard"
                 )
 
-            async def _read_dashboard() -> dict[str, int | None]:
-                await goto_and_check(page, "https://www.linkedin.com/dashboard/")
-
-                dashboard_text = ""
-                try:
-                    await page.wait_for_selector("main", timeout=3000)
-                except Exception:
-                    logger.debug("Dashboard analytics: no <main> selector")
+            async def _try_page_analytics(
+                url: str,
+            ) -> dict[str, int | None] | None:
+                """Try extracting analytics from a single page. Returns result
+                if any metric was found, else None."""
+                await goto_and_check(page, url)
 
                 try:
-                    widget = page.locator(
-                        "section, div[data-view-name*='dashboard'], main"
-                    ).first
-                    if await widget.count() > 0:
-                        dashboard_text = await widget.inner_text(timeout=2000)
+                    await page.wait_for_selector("main", timeout=5000)
                 except Exception:
-                    dashboard_text = ""
+                    logger.debug("Profile analytics: no <main> on %s", url)
 
-                if not any(
-                    value is not None
-                    for value in _extract_profile_analytics_from_text(
-                        dashboard_text
-                    ).values()
-                ):
+                # DOM extraction: aria-labels / link text in dashboard widget
+                result = await _extract_profile_analytics_from_dom(page)
+                if any(v is not None for v in result.values()):
+                    return result
+
+                # Text extraction from dashboard widget selectors
+                _DASHBOARD_SELECTORS = (
+                    "section:has(a[href*='profile-views'])",
+                    "section:has(a[href*='search-appearances'])",
+                    "div[data-view-name*='dashboard']",
+                    ".pv-dashboard-section",
+                    ".pv-deferred-area",
+                    "section.artdeco-card",
+                    "section, div[data-view-name*='dashboard'], main",
+                    "main",
+                )
+                for sel in _DASHBOARD_SELECTORS:
                     try:
-                        await page.evaluate(
-                            "window.scrollBy(0, document.body.scrollHeight * 0.5)"
-                        )
+                        widget = page.locator(sel).first
+                        if await widget.count() > 0:
+                            dashboard_text = await widget.inner_text(timeout=3000)
+                            parsed = _extract_profile_analytics_from_text(
+                                dashboard_text
+                            )
+                            if any(v is not None for v in parsed.values()):
+                                return parsed
                     except Exception:
-                        logger.debug("Dashboard analytics: scroll fallback unavailable")
-                    # Wait for body to stabilise (SPA redirect can transiently remove it)
-                    try:
-                        await page.wait_for_selector("body", timeout=8000)
-                    except Exception:
-                        logger.debug("Dashboard analytics: body wait timed out")
+                        continue
+
+                # Scroll and read full body
+                try:
+                    await page.evaluate(
+                        "window.scrollBy(0, document.body.scrollHeight * 0.5)"
+                    )
+                except Exception:
+                    pass
+                try:
+                    await page.wait_for_selector("body", timeout=5000)
+                except Exception:
+                    pass
+                try:
                     body_text = await page.locator("body").inner_text(timeout=8000)
-                    return _extract_profile_analytics_from_text(body_text)
+                    parsed = _extract_profile_analytics_from_text(body_text)
+                    if any(v is not None for v in parsed.values()):
+                        return parsed
+                except Exception:
+                    pass
 
-                return _extract_profile_analytics_from_text(dashboard_text)
+                return None
+
+            async def _read_dashboard() -> dict[str, int | None]:
+                # Try /feed/ first (2025 layout shows analytics widget),
+                # then /dashboard/ (legacy), then /in/me/ profile page.
+                for url in (
+                    "https://www.linkedin.com/feed/",
+                    "https://www.linkedin.com/dashboard/",
+                    "https://www.linkedin.com/in/me/",
+                ):
+                    result = await _try_page_analytics(url)
+                    if result is not None:
+                        return result
+
+                return {
+                    "profile_views": None,
+                    "search_appearances": None,
+                    "post_impressions": None,
+                }
 
             result = await asyncio.wait_for(_read_dashboard(), timeout=25)
 

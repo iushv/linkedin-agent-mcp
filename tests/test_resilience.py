@@ -85,7 +85,9 @@ class TestRunReadToolCascade:
         from linkedin_mcp_server.tools._common import run_read_tool
 
         async def _fetch_throttled():
-            raise RateLimitError("Rate limit message detected.", suggested_wait_time=1800)
+            raise RateLimitError(
+                "Rate limit message detected.", suggested_wait_time=1800
+            )
 
         with (
             patch(f"{_COMMON}.acquire_browser_lock", new_callable=AsyncMock),

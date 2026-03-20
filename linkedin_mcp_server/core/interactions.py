@@ -67,18 +67,49 @@ async def type_text(
     delay: int = 50,
     timeout: int = 5000,
 ) -> None:
-    """Resolve an input/editor, focus it, and type text with per-char delay."""
+    """Resolve an input/editor, focus it, and insert text.
+
+    For short text (< 200 chars), uses keystroke simulation for realism.
+    For longer text (>= 200 chars), injects via clipboard paste or JS
+    to avoid Playwright's per-char timeout on large Unicode strings.
+    """
 
     async def _type() -> None:
         locator = await locator_chain.find(page, timeout=timeout)
         await locator.click(timeout=timeout)
         await human_delay(120, 400)
-        try:
-            await locator.fill("", timeout=timeout)
-        except Exception:
-            # Contenteditable targets often do not support fill.
-            pass
-        await locator.type(text, delay=delay, timeout=timeout)
+
+        if len(text) < 200:
+            # Short text — keystroke simulation is fine
+            try:
+                await locator.fill("", timeout=timeout)
+            except Exception:
+                pass
+            await locator.type(text, delay=delay, timeout=timeout)
+        else:
+            # Long text — inject directly to avoid keystroke timeout.
+            # Try fill() first (works on <input>/<textarea>), then
+            # fall back to JS insertion for contenteditable editors.
+            try:
+                await locator.fill(text, timeout=timeout)
+            except Exception:
+                # Contenteditable — use execCommand('insertText') which
+                # fires React's synthetic input events correctly.
+                await page.evaluate(
+                    """(text) => {
+                        const el = document.querySelector(
+                            '.ql-editor[contenteditable="true"], '
+                            + '[contenteditable="true"][role="textbox"], '
+                            + '[contenteditable="true"]'
+                        );
+                        if (el) {
+                            el.focus();
+                            document.execCommand('selectAll', false, null);
+                            document.execCommand('insertText', false, text);
+                        }
+                    }""",
+                    text,
+                )
         await human_delay()
 
     await _with_retries(f"type:{locator_chain.name}", _type)
@@ -88,9 +119,7 @@ async def wait_for_modal(page: Page, timeout: int = 8000) -> None:
     """Wait for a LinkedIn modal or composer overlay to become visible."""
     # LinkedIn uses .artdeco-modal for traditional dialogs and
     # .share-creation-state / [role="dialog"] for the post composer overlay.
-    modal = page.locator(
-        ".artdeco-modal, .share-creation-state, [role='dialog']"
-    ).first
+    modal = page.locator(".artdeco-modal, .share-creation-state, [role='dialog']").first
     try:
         await modal.wait_for(state="visible", timeout=timeout)
     except PlaywrightTimeoutError as exc:

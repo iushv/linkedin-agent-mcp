@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
@@ -19,6 +21,8 @@ from linkedin_mcp_server.tools.job import (
     _first_locator_text,
     _normalize_job_url,
 )
+
+logger = logging.getLogger(__name__)
 
 _RECOMMENDATION_TITLE_SELECTORS = (
     ".job-card-list__title",
@@ -52,6 +56,13 @@ _ANCILLARY_JOB_LINE_RE = re.compile(
     r"(actively reviewing applicants|company alumni works here|promoted|easy apply|applied|resume matched)",
     re.IGNORECASE,
 )
+# Patterns that indicate a non-job card (profile / people-you-may-know / company spotlight)
+_NON_JOB_CARD_RE = re.compile(
+    r"(\bconnections?\b|\bfollowers?\b|\bpeople\s+you\s+may\s+know\b"
+    r"|\bpeople\s+also\s+viewed\b|\bwho\s+viewed\b|\bmutual\b"
+    r"|\bcompany\s+spotlight\b|\bschool\b.*\balumni\b)",
+    re.IGNORECASE,
+)
 
 
 def _clean_recommendation_line(line: str) -> str:
@@ -63,6 +74,11 @@ def _clean_recommendation_line(line: str) -> str:
 
 def _normalize_recommendation_title(title: str) -> str:
     return _VERIFIED_JOB_RE.sub("", title).strip()
+
+
+def _is_non_job_line(line: str) -> bool:
+    """Return True if a line looks like it belongs to a profile/people card."""
+    return bool(_NON_JOB_CARD_RE.search(line))
 
 
 def _parse_job_recommendations_text(
@@ -88,6 +104,9 @@ def _parse_job_recommendations_text(
         if not line:
             continue
         if line.lower() in _RECOMMENDATION_NOISE:
+            continue
+        # Skip lines that look like profile/people cards
+        if _is_non_job_line(line):
             continue
         filtered.append(line)
 
@@ -208,38 +227,148 @@ def register_recommendation_tools(mcp: FastMCP) -> None:
 
             await goto_and_check(page_obj, url)
             jobs: list[dict[str, str | None]] = []
+
+            # --- 2025+ DOM: job cards are <a> links with currentJobId param ---
             try:
-                rows = await SELECTORS["jobs"]["recommendation_cards"].resolve(page_obj)
-                for idx in range(await rows.count()):
-                    row = rows.nth(idx)
-                    title = await _first_locator_text(
-                        row, _RECOMMENDATION_TITLE_SELECTORS
-                    )
-                    company = await _first_locator_text(
-                        row, _RECOMMENDATION_COMPANY_SELECTORS
-                    )
-                    location_value = await _first_locator_text(
-                        row, _RECOMMENDATION_LOCATION_SELECTORS
-                    )
-                    href = await _first_locator_href(
-                        row, _RECOMMENDATION_LINK_SELECTORS
-                    )
-                    job_url = _normalize_job_url(href)
+                job_links = page_obj.locator("a[href*='currentJobId']")
+                link_count = await job_links.count()
+                logger.debug(
+                    "Found %d job recommendation links via currentJobId",
+                    link_count,
+                )
+                for idx in range(link_count):
+                    if len(jobs) >= safe_limit:
+                        break
+                    link = job_links.nth(idx)
+                    try:
+                        href = await link.get_attribute("href", timeout=500)
+                    except Exception:
+                        continue
+                    if not href:
+                        continue
+
+                    # Extract job ID from URL param currentJobId
+                    parsed = urlparse(href)
+                    params = parse_qs(parsed.query)
+                    job_id_list = params.get("currentJobId", [])
+                    job_id = job_id_list[0] if job_id_list else None
+                    if not job_id:
+                        continue
+
+                    job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+
+                    # Extract title, company, location from child elements
+                    title = None
+                    company = None
+                    location_value = None
+                    try:
+                        text = await link.inner_text(timeout=800)
+                        if text:
+                            lines = [
+                                ln.strip() for ln in text.splitlines() if ln.strip()
+                            ]
+                            # Filter noise lines
+                            clean = [
+                                ln
+                                for ln in lines
+                                if ln.lower() not in _RECOMMENDATION_NOISE
+                                and not _ANCILLARY_JOB_LINE_RE.search(ln)
+                            ]
+                            # Title is first clean line, company second
+                            if clean:
+                                title = _normalize_recommendation_title(clean[0])
+                                # Skip duplicate title line
+                                ci = 1
+                                if (
+                                    ci < len(clean)
+                                    and _normalize_recommendation_title(clean[ci])
+                                    == title
+                                ):
+                                    ci += 1
+                                if ci < len(clean):
+                                    company = clean[ci]
+                                    ci += 1
+                                if ci < len(clean):
+                                    location_value = clean[ci]
+                    except Exception:
+                        pass
+
+                    # Also try dismiss button for title confirmation
+                    if not title:
+                        try:
+                            dismiss = link.locator(
+                                "button[aria-label*='Dismiss' i]"
+                            ).first
+                            if await dismiss.count() > 0:
+                                dismiss_label = await dismiss.get_attribute(
+                                    "aria-label", timeout=300
+                                )
+                                if dismiss_label:
+                                    # "Dismiss AI Engineer - 3 job"
+                                    m = re.match(
+                                        r"Dismiss\s+(.+?)\s+job",
+                                        dismiss_label,
+                                        re.IGNORECASE,
+                                    )
+                                    if m:
+                                        title = m.group(1).strip()
+                        except Exception:
+                            pass
+
                     job = _build_job_result(
                         title=title,
                         company=company,
                         location=location_value,
-                        job_id=_extract_job_id(job_url),
+                        job_id=job_id,
                         job_url=job_url,
                     )
                     if job is None:
                         continue
                     jobs.append(job)
-                    if len(jobs) >= safe_limit:
-                        break
             except Exception:
-                jobs = []
+                logger.debug(
+                    "2025+ job recommendation extraction failed",
+                    exc_info=True,
+                )
 
+            # --- Legacy DOM fallback: CSS class-based selectors ---
+            if not jobs:
+                try:
+                    rows = await SELECTORS["jobs"]["recommendation_cards"].resolve(
+                        page_obj
+                    )
+                    for idx in range(await rows.count()):
+                        row = rows.nth(idx)
+                        href = await _first_locator_href(
+                            row, _RECOMMENDATION_LINK_SELECTORS
+                        )
+                        job_url = _normalize_job_url(href)
+                        if not job_url:
+                            continue
+                        title = await _first_locator_text(
+                            row, _RECOMMENDATION_TITLE_SELECTORS
+                        )
+                        company = await _first_locator_text(
+                            row, _RECOMMENDATION_COMPANY_SELECTORS
+                        )
+                        location_value = await _first_locator_text(
+                            row, _RECOMMENDATION_LOCATION_SELECTORS
+                        )
+                        job = _build_job_result(
+                            title=title,
+                            company=company,
+                            location=location_value,
+                            job_id=_extract_job_id(job_url),
+                            job_url=job_url,
+                        )
+                        if job is not None:
+                            jobs.append(job)
+                        if len(jobs) >= safe_limit:
+                            break
+                except Exception:
+                    pass
+
+            # --- Text fallback ---
             if not jobs:
                 body_text = await page_obj.locator("body").inner_text(timeout=2000)
                 jobs = _parse_job_recommendations_text(body_text, limit=safe_limit)
