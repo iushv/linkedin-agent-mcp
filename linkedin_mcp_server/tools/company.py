@@ -181,14 +181,19 @@ def register_company_tools(mcp: FastMCP) -> None:
 
             # B13 fix: detect the actual company that was resolved
             resolved_name = await _resolve_company_name(browser.page)
-            resolved_url = await _resolve_company_url(browser.page)
             if resolved_name:
                 result["resolved_name"] = resolved_name
-            if resolved_url and company_name.lower() not in resolved_url.lower():
-                result["warning"] = (
-                    f"LinkedIn resolved '{company_name}' to a different "
-                    f"company page: {resolved_url}"
-                )
+                # Check if the resolved name looks like a match for the slug.
+                # Slugs are lowercase, dashes replaced with spaces.
+                slug_words = set(company_name.lower().replace("-", " ").split())
+                name_words = set(resolved_name.lower().split())
+                # Warn if there's very little overlap between slug words
+                # and the resolved company name.
+                if slug_words and not slug_words & name_words:
+                    result["warning"] = (
+                        f"LinkedIn resolved slug '{company_name}' to "
+                        f"'{resolved_name}'. Verify this is the intended company."
+                    )
 
             if unknown:
                 result["unknown_sections"] = unknown

@@ -78,19 +78,72 @@ async def _read_open_to_work_enabled(page: Any) -> bool:
 
 
 async def _read_featured_skills(page: Any) -> list[str]:
-    # Try multiple selectors — LinkedIn changes class names frequently
-    _SKILL_SELECTORS = (
-        "span.pv-skill-category-entity__name-text",
-        # Current LinkedIn skills detail page selectors
-        "li.pvs-list__paged-list-item .t-bold span",
-        "li.pvs-list__paged-list-item span[aria-hidden='true']",
-        "li.pvs-list__paged-list-item .mr1.t-bold span",
-        "div.pvs-list__outer-container li span.t-bold span",
-        # Broader fallbacks
-        "[class*='skill-category-entity'] span",
-        ".pvs-entity--padded .t-bold span",
+    """Read skill names from the skills detail page.
+
+    LinkedIn's 2025+ DOM uses obfuscated CSS classes.  Skills are in
+    ``tabpanel > list > listitem > link[href*='keywords=']`` where the
+    link text is the skill name.
+    """
+    # Strategy 1: 2025+ DOM — skill links with search keywords
+    _SKILL_LINK_SELECTORS = (
+        "tabpanel a[href*='keywords=']",
+        "[role='tabpanel'] a[href*='keywords=']",
+        "main a[href*='keywords='][href*='SKILL']",
     )
-    for selector in _SKILL_SELECTORS:
+    for selector in _SKILL_LINK_SELECTORS:
+        try:
+            rows = page.locator(selector)
+            count = min(await rows.count(), 20)
+            if count == 0:
+                continue
+        except Exception:
+            continue
+
+        skills: list[str] = []
+        seen: set[str] = set()
+        for idx in range(count):
+            try:
+                text = await rows.nth(idx).inner_text(timeout=500)
+            except Exception:
+                continue
+            value = " ".join(text.split())
+            # Skill names appear twice in the link — deduplicate
+            if value and len(value) > 1 and value not in seen:
+                seen.add(value)
+                skills.append(value)
+
+        if skills:
+            return skills[:10]
+
+    # Strategy 2: edit buttons with alt="Edit <Skill>"
+    try:
+        edit_imgs = page.locator("img[alt^='Edit ']")
+        count = min(await edit_imgs.count(), 20)
+        if count > 0:
+            skills: list[str] = []
+            seen: set[str] = set()
+            for idx in range(count):
+                try:
+                    alt = await edit_imgs.nth(idx).get_attribute("alt", timeout=300)
+                    if alt and alt.startswith("Edit "):
+                        name = alt[5:].strip()
+                        if name and name not in seen:
+                            seen.add(name)
+                            skills.append(name)
+                except Exception:
+                    continue
+            if skills:
+                return skills[:10]
+    except Exception:
+        pass
+
+    # Strategy 3: legacy CSS selectors (pre-2025)
+    _LEGACY_SELECTORS = (
+        "span.pv-skill-category-entity__name-text",
+        "li.pvs-list__paged-list-item .t-bold span",
+        "[class*='skill-category-entity'] span",
+    )
+    for selector in _LEGACY_SELECTORS:
         try:
             rows = page.locator(selector)
             count = min(await rows.count(), 10)
@@ -99,7 +152,7 @@ async def _read_featured_skills(page: Any) -> list[str]:
         except Exception:
             continue
 
-        skills: list[str] = []
+        skills = []
         for idx in range(count):
             try:
                 text = await rows.nth(idx).inner_text(timeout=500)

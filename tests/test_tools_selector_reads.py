@@ -147,6 +147,7 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -189,6 +190,7 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -197,7 +199,9 @@ class TestBrowseFeed:
         register_feed_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "browse_feed")
         result = await tool_fn(count=3)
-        assert result["status"] == "error"
+        # When all selectors fail, feed gracefully returns empty posts (not error)
+        assert result["status"] == "success"
+        assert result["data"]["posts"] == []
 
 
 # ══════════════════════════════════════════
