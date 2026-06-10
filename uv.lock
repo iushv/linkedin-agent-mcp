@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -1056,7 +1056,7 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = ">=2.14.0" },
     { name = "inquirer", specifier = ">=3.4.0" },
-    { name = "patchright", specifier = ">=1.40.0" },
+    { name = "patchright", specifier = "==1.58.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
 ]
 

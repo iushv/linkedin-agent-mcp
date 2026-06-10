@@ -34,7 +34,11 @@ classifiers = [
 dependencies = [
     "fastmcp>=2.14.0",
     "inquirer>=3.4.0",
-    "patchright>=1.40.0",
+    # Upgrade checklist:
+    # 1) Change this pin, 2) uv lock && uv sync,
+    # 3) uv run patchright install chromium,
+    # 4) uv run python scripts/diag_dom.py.
+    "patchright==1.58.0",
     "python-dotenv>=1.1.1",
 ]
 
