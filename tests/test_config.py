@@ -12,7 +12,7 @@ class TestBrowserConfig:
     def test_defaults(self):
         config = BrowserConfig()
         assert config.headless is True
-        assert config.default_timeout == 5000
+        assert config.default_timeout == 30000
         assert config.user_data_dir == "~/.linkedin-mcp/profile"
 
     def test_validate_passes(self):

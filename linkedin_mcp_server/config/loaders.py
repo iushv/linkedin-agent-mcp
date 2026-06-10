@@ -244,7 +244,7 @@ def load_from_args(config: AppConfig) -> AppConfig:
         type=positive_int,
         default=None,
         metavar="MS",
-        help="Browser timeout for page operations in milliseconds (default: 5000)",
+        help="Browser timeout for page operations in milliseconds (default: 30000)",
     )
 
     parser.add_argument(
