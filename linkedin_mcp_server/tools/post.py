@@ -271,7 +271,9 @@ async def _finalize_post_submission(
         post_url = await _extract_recent_post_url(page)
     except Exception as exc:
         cleanup_completed = False
-        warnings.append(f"Post submitted, but extracting the activity URL failed: {exc}")
+        warnings.append(
+            f"Post submitted, but extracting the activity URL failed: {exc}"
+        )
         logger.warning("Post submission succeeded but URL extraction failed: %s", exc)
 
     try:

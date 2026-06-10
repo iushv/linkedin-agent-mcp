@@ -145,9 +145,7 @@ class TestNetworkTools:
         menu_connect.first = MagicMock()
 
         page.get_by_role.side_effect = lambda role, name=None, **kwargs: (
-            connect_button
-            if role == "button" and name == "Connect"
-            else menu_connect
+            connect_button if role == "button" and name == "Connect" else menu_connect
         )
         page.get_by_text.return_value = menu_connect
 
@@ -174,6 +172,7 @@ class TestNetworkTools:
         more_actions_chain = MagicMock()
         more_actions_chain.find = AsyncMock(return_value=more_locator)
         from linkedin_mcp_server.core.selectors import SELECTORS
+
         monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
 
         # Capture click ordering through the overlay-protected helper.
@@ -203,7 +202,9 @@ class TestNetworkTools:
         mcp = FastMCP("test")
         register_network_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "send_connection_request")
-        await tool_fn("https://www.linkedin.com/in/test-user/", confirm=True, dry_run=False)
+        await tool_fn(
+            "https://www.linkedin.com/in/test-user/", confirm=True, dry_run=False
+        )
 
         assert events[:3] == ["dismiss", "more", "menu"]
 
@@ -306,6 +307,7 @@ class TestNetworkTools:
         self, monkeypatch
     ):
         """All overlay-protected click paths fail → ElementNotFoundError(overlay_suspected)."""
+
         async def _run_write_tool(*, execute_fn, **kwargs):
             del kwargs
             return await execute_fn()
@@ -321,9 +323,7 @@ class TestNetworkTools:
         menu_connect.count = AsyncMock(return_value=0)
 
         page.get_by_role.side_effect = lambda role, name=None, **kwargs: (
-            connect_button
-            if role == "button" and name == "Connect"
-            else menu_connect
+            connect_button if role == "button" and name == "Connect" else menu_connect
         )
         page.get_by_text.return_value = menu_connect
 
@@ -351,6 +351,7 @@ class TestNetworkTools:
             side_effect=RuntimeError("locator chain unresolvable")
         )
         from linkedin_mcp_server.core.selectors import SELECTORS
+
         monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
 
         from linkedin_mcp_server.tools.network import register_network_tools

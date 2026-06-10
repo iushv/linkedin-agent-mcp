@@ -326,9 +326,8 @@ async def record_security_challenge() -> dict[str, Any]:
 def record_successful_write() -> None:
     """Reset challenge counter after a successful write path."""
     now = datetime.now(timezone.utc)
-    if (
-        (_session_health.disabled_until and now < _session_health.disabled_until)
-        or (_session_health.degraded_until and now < _session_health.degraded_until)
+    if (_session_health.disabled_until and now < _session_health.disabled_until) or (
+        _session_health.degraded_until and now < _session_health.degraded_until
     ):
         return
 

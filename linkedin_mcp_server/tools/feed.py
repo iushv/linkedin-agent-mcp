@@ -518,6 +518,7 @@ async def _extract_reaction_type_from_row(row: Any) -> str | None:
                     return reaction_type
     return None
 
+
 async def _extract_reactor_row(row: Any) -> dict[str, Any] | None:
     name, profile_url = await _find_profile_link(row)
     if not name and not profile_url:
@@ -595,6 +596,7 @@ async def _debug_comment_row_result(
         comment_text,
         " ".join(row_text.split())[:200] if row_text else "",
     )
+
 
 async def _extract_comment_row(
     row: Any,
@@ -875,7 +877,9 @@ async def _load_comment_rows(
     except Exception:
         loaded_count = 0
 
-    remaining_buttons = await _resolve_optional_locator("post_commenters", "load_more", page)
+    remaining_buttons = await _resolve_optional_locator(
+        "post_commenters", "load_more", page
+    )
     remaining_button_count = 0
     if remaining_buttons is not None:
         try:
@@ -1170,8 +1174,7 @@ async def _extract_post_identifier(card: Any) -> dict[str, str | None]:
     # Strategy 2.5: overflow/menu button attributes often carry the parent post URN.
     try:
         menu_buttons = card.locator(
-            "button[aria-controls*='urn:li:activity'], "
-            "button[id*='urn:li:activity']"
+            "button[aria-controls*='urn:li:activity'], button[id*='urn:li:activity']"
         )
         count = min(await menu_buttons.count(), 5)
         for idx in range(count):
@@ -2046,7 +2049,9 @@ async def _extract_activity_posts_from_dom(
         last_total = total_cards
 
         if stagnant_scrolls >= _ACTIVITY_STAGNANT_SCROLLS:
-            stopped_reason = "empty_page" if total_cards == 0 and not posts else "stagnant"
+            stopped_reason = (
+                "empty_page" if total_cards == 0 and not posts else "stagnant"
+            )
             break
 
     if not posts and stopped_reason == "empty_page":
@@ -2285,7 +2290,9 @@ def register_feed_tools(mcp: FastMCP) -> None:
                 if stagnant_scrolls >= _BROWSE_FEED_STAGNANT_SCROLLS:
                     if scroll_iterations < patient_scroll_floor:
                         continue
-                    stopped_reason = "empty_page" if total_cards == 0 and not posts else "stagnant"
+                    stopped_reason = (
+                        "empty_page" if total_cards == 0 and not posts else "stagnant"
+                    )
                     break
 
             if ctx:
@@ -2575,7 +2582,9 @@ def register_feed_tools(mcp: FastMCP) -> None:
             warnings: list[str] = []
             fallback_invoked = False
             try:
-                dom_result = await _extract_activity_posts_from_dom(page, limit=safe_limit)
+                dom_result = await _extract_activity_posts_from_dom(
+                    page, limit=safe_limit
+                )
                 if isinstance(dom_result, list):
                     posts = dom_result
                 else:
@@ -2653,20 +2662,15 @@ def register_feed_tools(mcp: FastMCP) -> None:
             # from "navigations succeeded but DOM yielded zero cards" (zero-posts
             # account or DOM variant — keep "empty_page"). Only flip to the new
             # stopped_reason when no URL completed goto_and_check successfully.
-            if (
-                fallback_invoked
-                and not diagnostics["activity_any_nav_succeeded"]
-            ):
+            if fallback_invoked and not diagnostics["activity_any_nav_succeeded"]:
                 diagnostics["stopped_reason"] = (
                     "activity_navigation_failed_fallback_used"
                 )
 
             diagnostics["posts_returned"] = len(posts[:safe_limit])
-            if (
-                diagnostics["stopped_reason"] in {"stagnant", "timeout"}
-                and diagnostics["posts_returned"]
-                < max(diagnostics["posts_requested"] // 2, 3)
-            ):
+            if diagnostics["stopped_reason"] in {"stagnant", "timeout"} and diagnostics[
+                "posts_returned"
+            ] < max(diagnostics["posts_requested"] // 2, 3):
                 warnings.append(
                     "Recent activity returned fewer posts than requested; retry if you need a fuller history."
                 )

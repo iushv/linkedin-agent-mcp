@@ -126,7 +126,9 @@ def _comment_row(
                 [FakeNode(text=headline)]
             ),
             ".comments-post-meta__headline": FakeLocator([FakeNode(text=headline)]),
-            ".comments-comment-meta__description": FakeLocator([FakeNode(text=headline)]),
+            ".comments-comment-meta__description": FakeLocator(
+                [FakeNode(text=headline)]
+            ),
             "span.t-12.t-normal": FakeLocator([FakeNode(text=headline)]),
             ".artdeco-entity-lockup__subtitle": FakeLocator([FakeNode(text=headline)]),
             ".comments-comment-item__main-content": FakeLocator(
@@ -135,12 +137,16 @@ def _comment_row(
             "span.comments-comment-item__main-content": FakeLocator(
                 [FakeNode(text=comment_text)]
             ),
-            "[data-test-id='comment-content']": FakeLocator([FakeNode(text=comment_text)]),
+            "[data-test-id='comment-content']": FakeLocator(
+                [FakeNode(text=comment_text)]
+            ),
             "span.update-components-text span.break-words": FakeLocator(
                 [FakeNode(text=comment_text)]
             ),
             "span.break-words": FakeLocator([FakeNode(text=comment_text)]),
-            "time.comments-comment-meta__timestamp": FakeLocator([FakeNode(text=time_ago)]),
+            "time.comments-comment-meta__timestamp": FakeLocator(
+                [FakeNode(text=time_ago)]
+            ),
             ".comments-comment-meta__timestamp": FakeLocator([FakeNode(text=time_ago)]),
             "time[datetime]": FakeLocator([FakeNode(text=time_ago)]),
             "a.comments-comment-meta__timestamp-link time": FakeLocator(
@@ -288,7 +294,9 @@ class TestPostAnalyticsTools:
                 "warnings": [],
             }
         )
-        monkeypatch.setattr("linkedin_mcp_server.tools.feed._load_reaction_modal", load_modal)
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed._load_reaction_modal", load_modal
+        )
 
         mcp = FastMCP("test")
         register_feed_tools(mcp)

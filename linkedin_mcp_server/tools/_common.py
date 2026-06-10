@@ -216,9 +216,7 @@ def normalize_post_reference(post_url: str) -> str:
         raise ValueError(f"Invalid LinkedIn post URL: {post_url}")
 
     path = parsed.path or ""
-    if not any(
-        marker in path for marker in ("/feed/update/", "/posts/", "/activity-")
-    ):
+    if not any(marker in path for marker in ("/feed/update/", "/posts/", "/activity-")):
         raise ValueError(f"Invalid LinkedIn post URL: {post_url}")
 
     return f"https://www.linkedin.com{path.rstrip('/')}/"

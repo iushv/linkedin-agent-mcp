@@ -167,9 +167,7 @@ def register_network_tools(mcp: FastMCP) -> None:
                 )
             else:
                 try:
-                    more_locator = await SELECTORS["network"]["more_actions"].find(
-                        page
-                    )
+                    more_locator = await SELECTORS["network"]["more_actions"].find(page)
                 except Exception as exc:
                     raise ElementNotFoundError(
                         "Could not locate a clickable More actions control for the connection request.",

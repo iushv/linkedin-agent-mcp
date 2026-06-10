@@ -118,9 +118,7 @@ class TestCreatePostGoldenPath:
         )
 
     @pytest.mark.asyncio
-    async def test_create_post_returns_success_when_cleanup_fails(
-        self, isolate_safety
-    ):
+    async def test_create_post_returns_success_when_cleanup_fails(self, isolate_safety):
         from fastmcp import FastMCP
 
         from linkedin_mcp_server.tools.post import register_post_tools
@@ -1241,6 +1239,7 @@ class TestConnectionRequestFallback:
         more_actions_chain = MagicMock()
         more_actions_chain.find = AsyncMock(return_value=more_locator)
         from linkedin_mcp_server.core.selectors import SELECTORS
+
         monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
 
         mcp = FastMCP("test")
@@ -1291,12 +1290,15 @@ class TestConnectionRequestFallback:
 
         # More button .click() raises (overlay), JS fallback also raises.
         more_locator = MagicMock()
-        more_locator.click = AsyncMock(side_effect=PlaywrightTimeoutError("intercepted"))
+        more_locator.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("intercepted")
+        )
         more_locator.element_handle = AsyncMock(return_value=object())
 
         more_actions_chain = MagicMock()
         more_actions_chain.find = AsyncMock(return_value=more_locator)
         from linkedin_mcp_server.core.selectors import SELECTORS
+
         monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
 
         page = (

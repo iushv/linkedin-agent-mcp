@@ -42,7 +42,9 @@ def test_ensure_browser_binary_returns_when_paths_exist(tmp_path):
     chromium.mkdir(parents=True)
     shell.mkdir(parents=True)
 
-    dry_run = MagicMock(returncode=0, stdout=_dry_run_output(chromium, shell), stderr="")
+    dry_run = MagicMock(
+        returncode=0, stdout=_dry_run_output(chromium, shell), stderr=""
+    )
     with patch(
         "linkedin_mcp_server.drivers.browser.subprocess.run",
         return_value=dry_run,
@@ -56,7 +58,9 @@ def test_ensure_browser_binary_returns_when_paths_exist(tmp_path):
 def test_ensure_browser_binary_installs_when_missing(tmp_path):
     chromium = tmp_path / "chromium-1208"
     shell = tmp_path / "chromium_headless_shell-1208"
-    dry_run = MagicMock(returncode=0, stdout=_dry_run_output(chromium, shell), stderr="")
+    dry_run = MagicMock(
+        returncode=0, stdout=_dry_run_output(chromium, shell), stderr=""
+    )
     install = MagicMock(returncode=0, stdout="installed", stderr="")
 
     def _run_side_effect(cmd, **kwargs):
@@ -79,7 +83,9 @@ def test_ensure_browser_binary_installs_when_missing(tmp_path):
 def test_ensure_browser_binary_install_failure_raises(tmp_path):
     chromium = tmp_path / "chromium-1208"
     shell = tmp_path / "chromium_headless_shell-1208"
-    dry_run = MagicMock(returncode=0, stdout=_dry_run_output(chromium, shell), stderr="")
+    dry_run = MagicMock(
+        returncode=0, stdout=_dry_run_output(chromium, shell), stderr=""
+    )
     install = MagicMock(returncode=1, stdout="", stderr="permission denied")
 
     with patch(
