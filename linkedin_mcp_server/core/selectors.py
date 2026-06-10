@@ -359,6 +359,60 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
             CSS("div.occludable-update"),
         ),
     },
+    "post_reactions": {
+        "count_button": chain(
+            "post_reactions_count_button",
+            CSS("button.social-details-social-counts__count-value-hover"),
+            CSS("button[aria-label*='reaction' i]"),
+            CSS(".social-details-social-counts__reactions-count button"),
+            CSS("button:has-text('reactions')"),
+        ),
+        "modal": chain(
+            "post_reactions_modal",
+            Role("dialog"),
+            CSS("div[role='dialog']:has(h2:has-text('Reactions'))"),
+            CSS(".reactions-modal"),
+            CSS(".social-details-reactors-tab-container"),
+        ),
+        "row": chain(
+            "post_reactions_row",
+            Role("listitem"),
+            CSS(".social-details-reactors-tab-body li"),
+            CSS("li.artdeco-list__item"),
+            CSS("[data-test-id*='reactor']"),
+        ),
+        "reaction_icon": chain(
+            "post_reactions_reaction_icon",
+            CSS("img[alt]"),
+            CSS("span[aria-label]"),
+            CSS("svg[aria-label]"),
+        ),
+    },
+    "post_commenters": {
+        "container": chain(
+            "post_commenters_container",
+            Text("comments"),
+            CSS("div[data-test-id='comments']"),
+            CSS(".comments-comments-list"),
+            CSS("section:has(h2:has-text('comments'))"),
+        ),
+        "load_more": chain(
+            "post_commenters_load_more",
+            Text("Load more comments"),
+            Text("Load previous comments"),
+            CSS("button.comments-comments-list__load-more-comments-button"),
+            CSS("button:has-text('Load more comments')"),
+            CSS("button:has-text('Load previous comments')"),
+        ),
+        "comment_item": chain(
+            "post_commenters_comment_item",
+            CSS("article.comments-comment-item"),
+            CSS("article.comments-comment-entity"),
+            CSS("li.comments-comment-item"),
+            CSS("[data-test-id='comment-item']"),
+            CSS("[data-id^='urn:li:comment:']"),
+        ),
+    },
     "people": {
         "search_result_cards": chain(
             "people_search_result_cards",

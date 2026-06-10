@@ -53,11 +53,21 @@ class SessionHealth:
     """In-memory session health tracking for repeated challenge handling."""
 
     consecutive_captchas: int = 0
+    degraded_until: datetime | None = None
     disabled_until: datetime | None = None
 
 
 _session_health = SessionHealth()
 _session_quota_counts: dict[str, int] = {}
+
+
+def challenge_cooldown_seconds(challenge_count: int) -> int:
+    """Return the suggested cooldown after the Nth consecutive challenge."""
+    if challenge_count <= 1:
+        return 300
+    if challenge_count == 2:
+        return 1800
+    return 3600
 
 
 def _ensure_state_dir() -> None:
@@ -292,17 +302,38 @@ async def record_security_challenge() -> dict[str, Any]:
     disable_minutes = int(config.get("captcha_disable_minutes", 15))
 
     _session_health.consecutive_captchas += 1
+    now = datetime.now(timezone.utc)
+    degraded_until = now + timedelta(
+        seconds=challenge_cooldown_seconds(_session_health.consecutive_captchas)
+    )
+    if (
+        _session_health.degraded_until is None
+        or degraded_until > _session_health.degraded_until
+    ):
+        _session_health.degraded_until = degraded_until
+
     if _session_health.consecutive_captchas >= threshold:
-        _session_health.disabled_until = datetime.now(timezone.utc) + timedelta(
-            minutes=disable_minutes
-        )
+        disabled_until = now + timedelta(minutes=disable_minutes)
+        if (
+            _session_health.disabled_until is None
+            or disabled_until > _session_health.disabled_until
+        ):
+            _session_health.disabled_until = disabled_until
 
     return get_session_health()
 
 
 def record_successful_write() -> None:
     """Reset challenge counter after a successful write path."""
+    now = datetime.now(timezone.utc)
+    if (
+        (_session_health.disabled_until and now < _session_health.disabled_until)
+        or (_session_health.degraded_until and now < _session_health.degraded_until)
+    ):
+        return
+
     _session_health.consecutive_captchas = 0
+    _session_health.degraded_until = None
     _session_health.disabled_until = None
 
 
@@ -310,10 +341,13 @@ def get_session_health() -> dict[str, Any]:
     """Get current in-memory session health state."""
     return {
         "consecutive_captchas": _session_health.consecutive_captchas,
+        "degraded_until": _session_health.degraded_until.isoformat() + "Z"
+        if _session_health.degraded_until
+        else None,
         "disabled_until": _session_health.disabled_until.isoformat() + "Z"
         if _session_health.disabled_until
         else None,
-        "degraded": is_session_degraded(),
+        "degraded": is_engagement_degraded(),
     }
 
 
@@ -322,18 +356,32 @@ def get_captcha_count() -> int:
     return _session_health.consecutive_captchas
 
 
+def get_engagement_cooldown_seconds() -> int | None:
+    """Return remaining engagement cooldown seconds, if any."""
+    now = datetime.now(timezone.utc)
+    if _session_health.degraded_until and now < _session_health.degraded_until:
+        return max(int((_session_health.degraded_until - now).total_seconds()), 1)
+    return None
+
+
+def is_engagement_degraded() -> bool:
+    """Return True if engagement writes are temporarily paused after a challenge."""
+    return get_engagement_cooldown_seconds() is not None
+
+
 def is_session_degraded() -> bool:
-    """Return True if at least one CAPTCHA has been seen but writes aren't fully disabled.
+    """Backward-compatible wrapper for engagement degradation state.
 
     A degraded session should increase delays and warn callers, while a
     *disabled* session (3+ CAPTCHAs) blocks write tools entirely.
     """
-    return _session_health.consecutive_captchas > 0
+    return is_engagement_degraded()
 
 
 def reset_safety_state() -> None:
     """Reset in-memory safety state for tests."""
     _session_health.consecutive_captchas = 0
+    _session_health.degraded_until = None
     _session_health.disabled_until = None
     _session_quota_counts.clear()
     if _write_lock.locked():

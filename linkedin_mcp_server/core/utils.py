@@ -27,16 +27,9 @@ async def detect_rate_limit(page: Page) -> None:
     Raises:
         RateLimitError: If any rate-limiting or security challenge is detected
     """
-    from .safety import get_captcha_count
+    from .safety import challenge_cooldown_seconds, get_captcha_count
 
-    # Graduated wait times based on how many CAPTCHAs the session has seen
-    captcha_count = get_captcha_count()
-    if captcha_count == 0:
-        captcha_wait = 300
-    elif captcha_count == 1:
-        captcha_wait = 1800
-    else:
-        captcha_wait = 3600
+    captcha_wait = challenge_cooldown_seconds(get_captcha_count() + 1)
 
     # Check URL for security challenges
     current_url = page.url
@@ -45,6 +38,7 @@ async def detect_rate_limit(page: Page) -> None:
             "LinkedIn security checkpoint detected. "
             "You may need to verify your identity or wait before continuing.",
             suggested_wait_time=captcha_wait,
+            challenge_type="checkpoint",
         )
 
     # Check for CAPTCHA
@@ -56,6 +50,7 @@ async def detect_rate_limit(page: Page) -> None:
             raise RateLimitError(
                 "CAPTCHA challenge detected. Manual intervention required.",
                 suggested_wait_time=captcha_wait,
+                challenge_type="captcha",
             )
     except RateLimitError:
         raise
@@ -97,7 +92,10 @@ async def detect_rate_limit(page: Page) -> None:
 
 async def detect_rate_limit_post_action(page: Page) -> None:
     """Detect post-submit challenge pages and inline action throttling messages."""
+    from .safety import challenge_cooldown_seconds, get_captcha_count
+
     await detect_rate_limit(page)
+    challenge_wait = challenge_cooldown_seconds(get_captcha_count() + 1)
 
     try:
         challenge_markers = page.locator(
@@ -108,7 +106,8 @@ async def detect_rate_limit_post_action(page: Page) -> None:
         if await challenge_markers.count() > 0:
             raise RateLimitError(
                 "LinkedIn challenge detected after action submission.",
-                suggested_wait_time=3600,
+                suggested_wait_time=challenge_wait,
+                challenge_type="captcha",
             )
     except RateLimitError:
         raise
@@ -133,6 +132,7 @@ async def detect_rate_limit_post_action(page: Page) -> None:
             raise RateLimitError(
                 "LinkedIn reported temporary action restriction.",
                 suggested_wait_time=1800,
+                challenge_type="inline_action_restriction",
             )
     except RateLimitError:
         raise

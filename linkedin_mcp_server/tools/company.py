@@ -22,6 +22,7 @@ from linkedin_mcp_server.drivers.browser import (
 from linkedin_mcp_server.error_handler import handle_tool_error
 from linkedin_mcp_server.scraping import LinkedInExtractor, parse_company_sections
 from linkedin_mcp_server.tools._common import goto_and_check, parse_count
+from linkedin_mcp_server.tools.feed import _extract_post_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -107,24 +108,8 @@ def _parse_company_post_text(text: str) -> dict[str, Any]:
 
 async def _extract_company_post_url(card: Any) -> str | None:
     """Extract the post URL from a company feed card."""
-    for selector in (
-        "a[href*='/feed/update/']",
-        "a[href*='/posts/']",
-        "a[href*='urn%3Ali%3Aactivity']",
-        "a[data-tracking-control-name*='update']",
-    ):
-        try:
-            loc = card.locator(selector).first
-            if await loc.count() > 0:
-                href = await loc.get_attribute("href", timeout=300)
-                if href:
-                    href = href.strip()
-                    if href.startswith("/"):
-                        href = f"https://www.linkedin.com{href}"
-                    return href
-        except Exception:
-            continue
-    return None
+    identifier = await _extract_post_identifier(card)
+    return identifier.get("url")
 
 
 def register_company_tools(mcp: FastMCP) -> None:
@@ -313,8 +298,9 @@ def register_company_tools(mcp: FastMCP) -> None:
 
                     post = _parse_company_post_text(stripped)
 
-                    # Try to extract post URL from card
-                    post["url"] = await _extract_company_post_url(card)
+                    identifier = await _extract_post_identifier(card)
+                    post["url"] = identifier.get("url")
+                    post["post_urn"] = identifier.get("post_urn")
                     posts.append(post)
 
                 processed_idx = total_cards

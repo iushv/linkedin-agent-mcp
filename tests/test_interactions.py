@@ -174,6 +174,15 @@ class TestWaitForModal:
 
 
 class TestDismissModal:
+    @staticmethod
+    def _make_button(*, visible: bool, count: int = 1):
+        button = MagicMock()
+        button.first = button
+        button.count = AsyncMock(return_value=count)
+        button.is_visible = AsyncMock(return_value=visible)
+        button.click = AsyncMock()
+        return button
+
     @pytest.mark.asyncio
     async def test_closes_visible_modal(self, monkeypatch):
         from linkedin_mcp_server.core.interactions import dismiss_modal
@@ -183,17 +192,64 @@ class TestDismissModal:
         modal = MagicMock()
         modal.is_visible = AsyncMock(return_value=True)
         modal.wait_for = AsyncMock()
+        dismiss_button = self._make_button(visible=True)
+        missing_button = self._make_button(visible=False, count=0)
+
+        def _modal_locator(selector: str):
+            if selector == "button.artdeco-modal__dismiss":
+                return dismiss_button
+            return missing_button
+
+        def _modal_get_by_label(label: str, exact: bool = True):
+            del exact
+            if label in {"Dismiss", "Close"}:
+                return missing_button
+            return missing_button
+
+        modal.locator = MagicMock(side_effect=_modal_locator)
+        modal.get_by_label = MagicMock(side_effect=_modal_get_by_label)
 
         page = MagicMock()
         page.locator.return_value.first = modal
 
-        # Mock click_element to succeed
-        monkeypatch.setattr(
-            "linkedin_mcp_server.core.interactions.click_element", AsyncMock()
-        )
-
         result = await dismiss_modal(page, timeout=500)
         assert result is True
+        dismiss_button.click.assert_awaited_once_with(timeout=500)
+
+    @pytest.mark.asyncio
+    async def test_skips_hidden_dismiss_button(self):
+        from linkedin_mcp_server.core.interactions import dismiss_modal
+
+        modal = MagicMock()
+        modal.is_visible = AsyncMock(return_value=True)
+        modal.wait_for = AsyncMock()
+        hidden_dismiss = self._make_button(visible=False, count=1)
+        missing_button = self._make_button(visible=False, count=0)
+
+        def _modal_locator(selector: str):
+            if selector == "button.artdeco-modal__dismiss":
+                return missing_button
+            if selector == "button[aria-label='Dismiss']":
+                return hidden_dismiss
+            return missing_button
+
+        def _modal_get_by_label(label: str, exact: bool = True):
+            del exact
+            if label == "Dismiss":
+                return hidden_dismiss
+            return missing_button
+
+        modal.locator = MagicMock(side_effect=_modal_locator)
+        modal.get_by_label = MagicMock(side_effect=_modal_get_by_label)
+
+        page = MagicMock()
+        page.locator.return_value.first = modal
+
+        result = await dismiss_modal(page, timeout=500)
+
+        assert result is False
+        hidden_dismiss.click.assert_not_awaited()
+        modal.wait_for.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

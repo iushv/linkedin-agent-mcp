@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from .exceptions import InteractionError
-from .selectors import LocatorChain, SELECTORS
+from .selectors import LocatorChain
 
 
 async def human_delay(min_ms: int = 500, max_ms: int = 1500) -> None:
@@ -48,7 +48,9 @@ async def _with_retries(
 
 
 async def click_element(
-    page: Page, locator_chain: LocatorChain, timeout: int = 5000
+    page: Page,
+    locator_chain: LocatorChain,
+    timeout: int = 5000,
 ) -> None:
     """Resolve and click an element using a resilient locator chain."""
 
@@ -131,16 +133,39 @@ async def wait_for_modal(page: Page, timeout: int = 8000) -> None:
 
 
 async def dismiss_modal(page: Page, timeout: int = 5000) -> bool:
-    """Dismiss the currently active modal if present."""
-    modal = page.locator(".artdeco-modal").first
+    """Dismiss the currently active modal if present.
+
+    LinkedIn can render hidden dismiss/close buttons elsewhere in the DOM
+    before the active modal has fully animated in. Restrict the click target
+    to a visible control within the visible modal itself.
+    """
+    modal = page.locator(".artdeco-modal, .share-creation-state, [role='dialog']").first
 
     try:
-        if await modal.is_visible(timeout=1000):
-            await click_element(
-                page, SELECTORS["common"]["dismiss_modal"], timeout=timeout
-            )
-            await modal.wait_for(state="hidden", timeout=timeout)
-            return True
+        if not await modal.is_visible(timeout=1000):
+            return False
+
+        close_candidates = (
+            modal.locator("button.artdeco-modal__dismiss").first,
+            modal.get_by_label("Dismiss", exact=True).first,
+            modal.get_by_label("Close", exact=True).first,
+            modal.locator("button[aria-label='Dismiss']").first,
+            modal.locator("button[aria-label='Close']").first,
+        )
+
+        for button in close_candidates:
+            try:
+                if await button.count() == 0:
+                    continue
+                if not await button.is_visible(timeout=min(timeout, 1000)):
+                    continue
+                await button.click(timeout=timeout)
+                await modal.wait_for(state="hidden", timeout=timeout)
+                return True
+            except PlaywrightTimeoutError:
+                continue
+            except Exception:
+                continue
     except PlaywrightTimeoutError:
         return False
     except Exception as exc:

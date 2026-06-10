@@ -11,9 +11,11 @@ from linkedin_mcp_server.tools.feed import (
     _build_activity_post_analytics_item,
     _build_post_analytics_item,
     _extract_metric,
+    _extract_post_identifier,
     _extract_post_from_text,
     _extract_post_url,
     _extract_time_ago,
+    _is_engagement_actionable_identifier,
     _looks_like_analytics_card_text,
     _normalize_post_url,
     _parse_posts_from_activity_text,
@@ -30,6 +32,9 @@ from linkedin_mcp_server.tools.job import (
     _parse_job_card_text,
     _parse_job_search_results_text,
 )
+
+# ── company.py parsers ──
+from linkedin_mcp_server.tools.company import _extract_company_post_url
 
 # ── messaging.py parsers ──
 from linkedin_mcp_server.tools.messaging import (
@@ -200,6 +205,25 @@ class TestNormalizePostUrl:
         assert _normalize_post_url("/messaging/thread/123/") is None
 
 
+class TestEngagementActionableIdentifier:
+    def test_post_urn_is_actionable(self):
+        assert _is_engagement_actionable_identifier(
+            url=None, post_urn="urn:li:activity:123"
+        )
+
+    def test_feed_update_url_is_actionable(self):
+        assert _is_engagement_actionable_identifier(
+            url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
+            post_urn=None,
+        )
+
+    def test_company_posts_url_is_not_engagement_actionable(self):
+        assert not _is_engagement_actionable_identifier(
+            url="https://www.linkedin.com/company/example/posts/?feedView=all",
+            post_urn=None,
+        )
+
+
 class TestExtractPostUrl:
     @pytest.mark.asyncio
     async def test_skips_missing_selectors_without_get_attribute_wait(self):
@@ -226,6 +250,261 @@ class TestExtractPostUrl:
 
         assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123/"
         missing.first.get_attribute.assert_not_called()
+
+
+class TestExtractPostIdentifier:
+    @pytest.mark.asyncio
+    async def test_hydration_state_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, "", "urn:li:activity:7654321"]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "hydration",
+        }
+
+    @pytest.mark.asyncio
+    async def test_menu_button_strategy_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        menu_button = MagicMock()
+        menu_button.get_attribute = AsyncMock(
+            side_effect=["urn:li:activity:7654321", None]
+        )
+
+        menu_buttons = MagicMock()
+        menu_buttons.count = AsyncMock(return_value=1)
+        menu_buttons.nth = MagicMock(return_value=menu_button)
+
+        def _locator(selector: str):
+            if "button[aria-controls*='urn:li:activity']" in selector:
+                return menu_buttons
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "menu_button",
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_empty_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None, None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {"url": None, "post_urn": None}
+
+
+class TestExtractCompanyPostUrl:
+    @pytest.mark.asyncio
+    async def test_company_post_url_extraction_uses_identifier_helper(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(return_value="urn:li:activity:123")
+
+        result = await _extract_company_post_url(card)
+
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+
+    @pytest.mark.asyncio
+    async def test_company_post_url_preserves_existing_anchor(self):
+        card = MagicMock()
+
+        present = MagicMock()
+        present.count = AsyncMock(return_value=1)
+        present.first = MagicMock()
+        present.first.get_attribute = AsyncMock(
+            return_value="/feed/update/urn:li:activity:456/"
+        )
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        def _locator(selector: str):
+            return present if selector == "a[href*='/feed/update/']" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+
+        result = await _extract_company_post_url(card)
+
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:456/"
+
+    @pytest.mark.asyncio
+    async def test_outer_html_unique_urn_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, '<div data-any="urn:li:activity:7654321"></div>']
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "outer_html",
+        }
+
+    @pytest.mark.asyncio
+    async def test_outer_html_multiple_urns_falls_through(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        broad_links = MagicMock()
+        broad_links.count = AsyncMock(return_value=1)
+        broad_link = MagicMock()
+        broad_link.get_attribute = AsyncMock(
+            return_value="/feed/update/urn:li:activity:999/"
+        )
+        broad_links.nth = MagicMock(return_value=broad_link)
+
+        def _locator(selector: str):
+            return broad_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[
+                None,
+                None,
+                ("<div>urn:li:activity:111</div><div>urn:li:activity:222</div>"),
+            ]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+            "post_urn": "urn:li:activity:999",
+            "strategy": "broad_anchor",
+        }
+
+    @pytest.mark.asyncio
+    async def test_hydration_state_picks_most_frequent(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        # The browser-context JS performs the frequency tiebreak; this test
+        # validates that the chosen URN is propagated correctly in Python.
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, "", "urn:li:activity:3333333"]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:3333333",
+            "post_urn": "urn:li:activity:3333333",
+            "strategy": "hydration",
+        }
+
+    @pytest.mark.asyncio
+    async def test_hydration_state_ties_return_null(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None, "", None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {"url": None, "post_urn": None}
 
 
 class TestLooksLikeAnalyticsCardText:

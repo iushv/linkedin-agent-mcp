@@ -8,10 +8,15 @@ from typing import Any
 
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
+from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from linkedin_mcp_server.core.exceptions import ElementNotFoundError
 from linkedin_mcp_server.core.interactions import click_element, type_text
 from linkedin_mcp_server.core.selectors import SELECTORS
-from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
+from linkedin_mcp_server.core.utils import (
+    detect_rate_limit_post_action,
+    handle_modal_close,
+)
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.tools._common import (
     goto_and_check,
@@ -22,6 +27,49 @@ from linkedin_mcp_server.tools._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _click_with_overlay_protection(
+    page: Any,
+    locator: Any,
+    *,
+    timeout_ms: int = 5000,
+    failure_message: str = "Click intercepted by overlay; JS fallback also failed.",
+) -> None:
+    """Click a Playwright locator with a JS-evaluate fallback if the click is intercepted.
+
+    Bounds the failure path at ~timeout_ms instead of Playwright's 30s default and raises
+    a structured ElementNotFoundError(context={"overlay_suspected": True}) on total failure.
+    """
+    try:
+        await locator.click(timeout=timeout_ms)
+        return
+    except (PlaywrightTimeoutError, TimeoutError) as exc:
+        element_handle_fn = getattr(locator, "element_handle", None)
+        if element_handle_fn is None:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from exc
+        try:
+            handle = await element_handle_fn()
+        except Exception as inner:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from inner
+        if handle is None:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from exc
+        try:
+            await page.evaluate("(el) => el.click()", handle)
+        except Exception as inner:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from inner
 
 
 def _extract_mutual_connections(text: str) -> int | None:
@@ -36,6 +84,43 @@ def _extract_name_headline(text: str) -> tuple[str, str]:
     name = lines[0] if lines else ""
     headline = lines[1] if len(lines) > 1 else ""
     return name, headline
+
+
+async def _find_invite_button(row: Any, action: str) -> Any | None:
+    """Resolve invitation action buttons across LinkedIn DOM variants."""
+    if action == "accept":
+        candidates = [
+            lambda: row.get_by_role("button", name=re.compile(r"^Accept$", re.I)),
+            lambda: row.locator("button[aria-label*='Accept' i]"),
+            lambda: row.locator("button:has-text('Accept')"),
+            lambda: row.locator("button[data-control-name*='accept' i]"),
+        ]
+    else:
+        candidates = [
+            lambda: row.get_by_role(
+                "button", name=re.compile(r"^(Ignore|Decline)$", re.I)
+            ),
+            lambda: row.locator(
+                "button[aria-label*='Ignore' i], button[aria-label*='Decline' i]"
+            ),
+            lambda: row.locator(
+                "button:has-text('Ignore'), button:has-text('Decline')"
+            ),
+            lambda: row.locator(
+                "button[data-control-name*='ignore' i], "
+                "button[data-control-name*='decline' i]"
+            ),
+        ]
+
+    for factory in candidates:
+        locator = factory()
+        try:
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            continue
+
+    return None
 
 
 def register_network_tools(mcp: FastMCP) -> None:
@@ -69,16 +154,49 @@ def register_network_tools(mcp: FastMCP) -> None:
                 )
 
             await goto_and_check(page, normalized_url)
+            await handle_modal_close(page)
 
             connect_button = page.get_by_role("button", name="Connect")
             if await connect_button.count() > 0:
-                await connect_button.first.click()
+                await _click_with_overlay_protection(
+                    page,
+                    connect_button.first,
+                    failure_message=(
+                        "Connect button click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
             else:
-                await click_element(page, SELECTORS["network"]["more_actions"])
+                try:
+                    more_locator = await SELECTORS["network"]["more_actions"].find(
+                        page
+                    )
+                except Exception as exc:
+                    raise ElementNotFoundError(
+                        "Could not locate a clickable More actions control for the connection request.",
+                        context={"overlay_suspected": True},
+                    ) from exc
+                await _click_with_overlay_protection(
+                    page,
+                    more_locator,
+                    failure_message=(
+                        "More actions click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
                 menu_connect = page.get_by_role("menuitem", name="Connect")
                 if await menu_connect.count() == 0:
                     menu_connect = page.get_by_text("Connect")
-                await menu_connect.first.click()
+                if await menu_connect.count() == 0:
+                    raise ElementNotFoundError(
+                        "Could not locate Connect action after opening the More actions menu.",
+                        context={"overlay_suspected": True},
+                    )
+                await _click_with_overlay_protection(
+                    page,
+                    menu_connect.first,
+                    failure_message=(
+                        "Connect menu item click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
 
             if note:
                 await click_element(page, SELECTORS["network"]["add_note"])
@@ -274,19 +392,14 @@ def register_network_tools(mcp: FastMCP) -> None:
             if target_row is None:
                 raise ValueError("Invitation not found for the provided profile URL")
 
-            if normalized_action == "accept":
-                button = target_row.get_by_role("button", name="Accept")
-            else:
-                button = target_row.get_by_role("button", name="Ignore")
-                if await button.count() == 0:
-                    button = target_row.get_by_role("button", name="Decline")
-
-            if await button.count() == 0:
-                raise ValueError(
-                    f"Could not find {normalized_action} button for invitation"
+            button = await _find_invite_button(target_row, normalized_action)
+            if button is None:
+                raise ElementNotFoundError(
+                    f"Could not locate {normalized_action} button for invitation. "
+                    "LinkedIn may have changed the DOM - fall back to Chrome MCP."
                 )
 
-            await button.first.click()
+            await button.click()
             await detect_rate_limit_post_action(page)
 
             if ctx:

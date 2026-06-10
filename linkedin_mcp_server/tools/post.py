@@ -22,8 +22,12 @@ from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.tools._common import (
+    FEED_NAVIGATION_TIMEOUT_MS,
+    ensure_engagement_allowed,
+    effective_navigation_timeout_ms,
     ensure_page_healthy,
     goto_and_check,
+    normalize_post_reference,
     run_write_tool,
 )
 
@@ -31,7 +35,11 @@ logger = logging.getLogger(__name__)
 
 
 async def _open_composer(page: Any) -> None:
-    await goto_and_check(page, "https://www.linkedin.com/feed/")
+    await goto_and_check(
+        page,
+        "https://www.linkedin.com/feed/",
+        timeout_ms=effective_navigation_timeout_ms(FEED_NAVIGATION_TIMEOUT_MS),
+    )
     # Fail fast if the page loaded into a CAPTCHA/challenge state
     await ensure_page_healthy(page)
 
@@ -244,6 +252,56 @@ async def _extract_recent_post_url(page: Any) -> str | None:
     return f"https://www.linkedin.com{href}"
 
 
+async def _finalize_post_submission(
+    page: Any,
+    *,
+    success_message: str,
+) -> dict[str, Any]:
+    """Confirm submission, then downgrade post-submit cleanup failures to warnings."""
+    # Rate-limit / challenge detection is intentionally NOT wrapped —
+    # a post-submit challenge is a real failure that must propagate to
+    # run_write_tool's exception handler, unlike cosmetic cleanup below.
+    await detect_rate_limit_post_action(page)
+
+    warnings: list[str] = []
+    post_url: str | None = None
+    cleanup_completed = True
+
+    try:
+        post_url = await _extract_recent_post_url(page)
+    except Exception as exc:
+        cleanup_completed = False
+        warnings.append(f"Post submitted, but extracting the activity URL failed: {exc}")
+        logger.warning("Post submission succeeded but URL extraction failed: %s", exc)
+
+    try:
+        await dismiss_modal(page)
+    except Exception as exc:
+        cleanup_completed = False
+        warnings.append(f"Post submitted, but composer cleanup failed: {exc}")
+        logger.warning("Post submission succeeded but composer cleanup failed: %s", exc)
+
+    if post_url is None:
+        try:
+            post_url = await _extract_recent_post_url(page)
+        except Exception as exc:
+            cleanup_completed = False
+            warnings.append(
+                f"Post submitted, but extracting the activity URL after cleanup failed: {exc}"
+            )
+            logger.warning(
+                "Post submission succeeded but follow-up URL extraction failed: %s", exc
+            )
+
+    return {
+        "message": success_message,
+        "resource_url": post_url,
+        "warnings": warnings,
+        "submission_confirmed": True,
+        "cleanup_completed": cleanup_completed,
+    }
+
+
 def register_post_tools(mcp: FastMCP) -> None:
     """Register post creation/deletion/repost tools."""
 
@@ -283,20 +341,17 @@ def register_post_tools(mcp: FastMCP) -> None:
 
             await _set_visibility_if_needed(page, visibility)
             await _click_submit(page)
-            await detect_rate_limit_post_action(page)
-            await dismiss_modal(page)
-
-            post_url = await _extract_recent_post_url(page)
+            result = await _finalize_post_submission(
+                page,
+                success_message="Post created successfully.",
+            )
 
             if ctx:
                 await ctx.report_progress(
                     progress=100, total=100, message="Post created"
                 )
 
-            return {
-                "message": "Post created successfully.",
-                "resource_url": post_url,
-            }
+            return result
 
         return await run_write_tool(
             action="create_post",
@@ -375,18 +430,17 @@ def register_post_tools(mcp: FastMCP) -> None:
                 pass
 
             await click_element(page, SELECTORS["post_composer"]["submit"])
-            await detect_rate_limit_post_action(page)
-            await dismiss_modal(page)
+            result = await _finalize_post_submission(
+                page,
+                success_message="Poll created successfully.",
+            )
 
             if ctx:
                 await ctx.report_progress(
                     progress=100, total=100, message="Poll created"
                 )
 
-            return {
-                "message": "Poll created successfully.",
-                "resource_url": await _extract_recent_post_url(page),
-            }
+            return result
 
         return await run_write_tool(
             action="create_poll",
@@ -417,6 +471,7 @@ def register_post_tools(mcp: FastMCP) -> None:
         confirm: bool = False,
     ) -> dict[str, Any]:
         """Delete a LinkedIn post by URL."""
+        normalized_post_url = normalize_post_reference(post_url)
 
         async def _execute() -> dict[str, Any]:
             browser = await get_or_create_browser()
@@ -425,7 +480,7 @@ def register_post_tools(mcp: FastMCP) -> None:
             if ctx:
                 await ctx.report_progress(progress=0, total=100, message="Loading post")
 
-            await goto_and_check(page, post_url)
+            await goto_and_check(page, normalized_post_url)
             await click_element(page, SELECTORS["post_actions"]["menu"])
             await click_and_confirm(
                 page,
@@ -439,14 +494,17 @@ def register_post_tools(mcp: FastMCP) -> None:
                     progress=100, total=100, message="Post deleted"
                 )
 
-            return {"message": "Post deleted successfully.", "resource_url": post_url}
+            return {
+                "message": "Post deleted successfully.",
+                "resource_url": normalized_post_url,
+            }
 
         return await run_write_tool(
             action="delete_post",
-            params={"post_url": post_url},
+            params={"post_url": normalized_post_url},
             dry_run=dry_run,
             confirm=confirm,
-            description=f"Delete LinkedIn post at {post_url}.",
+            description=f"Delete LinkedIn post at {normalized_post_url}.",
             execute_fn=_execute,
         )
 
@@ -466,15 +524,18 @@ def register_post_tools(mcp: FastMCP) -> None:
         confirm: bool = False,
     ) -> dict[str, Any]:
         """Repost an existing LinkedIn post with optional commentary."""
+        normalized_post_url = normalize_post_reference(post_url)
 
         async def _execute() -> dict[str, Any]:
+            await ensure_engagement_allowed()
             browser = await get_or_create_browser()
             page = browser.page
 
             if ctx:
                 await ctx.report_progress(progress=0, total=100, message="Loading post")
 
-            await goto_and_check(page, post_url)
+            await goto_and_check(page, normalized_post_url)
+            await ensure_page_healthy(page)
             await click_element(page, SELECTORS["post_actions"]["repost"])
 
             if comment:
@@ -498,14 +559,14 @@ def register_post_tools(mcp: FastMCP) -> None:
 
             return {
                 "message": "Repost submitted successfully.",
-                "resource_url": post_url,
+                "resource_url": normalized_post_url,
             }
 
         return await run_write_tool(
             action="repost",
-            params={"post_url": post_url, "comment": comment},
+            params={"post_url": normalized_post_url, "comment": comment},
             dry_run=dry_run,
             confirm=confirm,
-            description=f"Repost LinkedIn post at {post_url}.",
+            description=f"Repost LinkedIn post at {normalized_post_url}.",
             execute_fn=_execute,
         )

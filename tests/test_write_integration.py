@@ -31,8 +31,9 @@ async def get_tool_fn(
     return tool.fn
 
 
-async def _goto_and_check(p, url):
+async def _goto_and_check(p, url, **kwargs):
     """Async side_effect for goto_and_check to avoid unawaited coroutine warnings."""
+    del kwargs
     await p.goto(url)
 
 
@@ -85,6 +86,10 @@ class TestCreatePostGoldenPath:
                 f"{_POST}.goto_and_check",
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
+            ) as mock_goto_and_check,
+            patch(
+                f"{_POST}.effective_navigation_timeout_ms",
+                side_effect=lambda minimum_ms: minimum_ms,
             ),
             patch(f"{_POST}.ensure_page_healthy", new_callable=AsyncMock),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
@@ -102,6 +107,80 @@ class TestCreatePostGoldenPath:
 
         assert result["status"] == "success"
         assert "create_post" in result.get("action", "")
+        assert result["data"] == {
+            "submission_confirmed": True,
+            "cleanup_completed": True,
+        }
+        mock_goto_and_check.assert_any_await(
+            page,
+            "https://www.linkedin.com/feed/",
+            timeout_ms=45000,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_post_returns_success_when_cleanup_fails(
+        self, isolate_safety
+    ):
+        from fastmcp import FastMCP
+
+        from linkedin_mcp_server.tools.post import register_post_tools
+
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/feed/")
+            .with_modal(visible=True)
+            .with_post_url("https://www.linkedin.com/feed/update/urn:li:activity:456/")
+            .build()
+        )
+
+        browser = _make_browser(page)
+        mcp = FastMCP("test")
+        register_post_tools(mcp)
+
+        with (
+            patch(
+                f"{_POST}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_POST}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
+            patch(
+                f"{_POST}.effective_navigation_timeout_ms",
+                side_effect=lambda minimum_ms: minimum_ms,
+            ),
+            patch(f"{_POST}.ensure_page_healthy", new_callable=AsyncMock),
+            patch(f"{_POST}.click_element", new_callable=AsyncMock),
+            patch(f"{_POST}.type_text", new_callable=AsyncMock),
+            patch(f"{_POST}.wait_for_modal", new_callable=AsyncMock),
+            patch(
+                f"{_POST}.dismiss_modal",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("dismiss failed"),
+            ),
+            patch(f"{_POST}.detect_rate_limit_post_action", new_callable=AsyncMock),
+        ):
+            tool_fn = await get_tool_fn(mcp, "create_post")
+            result = await tool_fn(
+                text="Hello LinkedIn!",
+                confirm=True,
+                dry_run=False,
+            )
+
+        assert result["status"] == "success"
+        assert result["resource_url"] == (
+            "https://www.linkedin.com/feed/update/urn:li:activity:456/"
+        )
+        assert result["data"] == {
+            "submission_confirmed": True,
+            "cleanup_completed": False,
+        }
+        assert result["warnings"] == [
+            "Post submitted, but composer cleanup failed: dismiss failed"
+        ]
 
     @pytest.mark.asyncio
     async def test_dry_run_skips_execution(self, isolate_safety):
@@ -163,8 +242,10 @@ class TestReactToPostGoldenPath:
                 f"{_ENGAGE}.goto_and_check",
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
-            ),
+            ) as mock_goto_and_check,
             patch(f"{_ENGAGE}.click_element", new_callable=AsyncMock),
+            patch(f"{_ENGAGE}.ensure_page_healthy", new_callable=AsyncMock),
+            patch(f"{_ENGAGE}.ensure_engagement_allowed", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
             patch(
                 f"{_ENGAGE}.SELECTORS",
@@ -179,13 +260,17 @@ class TestReactToPostGoldenPath:
         ):
             tool_fn = await get_tool_fn(mcp, "react_to_post")
             result = await tool_fn(
-                post_url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
+                post_url="urn:li:activity:123",
                 reaction="like",
                 confirm=True,
                 dry_run=False,
             )
 
         assert result["status"] == "success"
+        mock_goto_and_check.assert_any_await(
+            page,
+            "https://www.linkedin.com/feed/update/urn:li:activity:123",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +452,10 @@ class TestCreatePoll:
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
             ),
+            patch(
+                f"{_POST}.effective_navigation_timeout_ms",
+                side_effect=lambda minimum_ms: minimum_ms,
+            ),
             patch(f"{_POST}.click_element", new_callable=AsyncMock),
             patch(f"{_POST}.type_text", new_callable=AsyncMock),
             patch(f"{_POST}.wait_for_modal", new_callable=AsyncMock),
@@ -383,6 +472,10 @@ class TestCreatePoll:
             )
 
         assert result["status"] == "success"
+        assert result["data"] == {
+            "submission_confirmed": True,
+            "cleanup_completed": True,
+        }
         duration_locator.select_option.assert_awaited_once()
 
 
@@ -658,6 +751,8 @@ class TestReplyToComment:
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
             ),
+            patch(f"{_ENGAGE}.ensure_page_healthy", new_callable=AsyncMock),
+            patch(f"{_ENGAGE}.ensure_engagement_allowed", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "reply_to_comment")
@@ -697,6 +792,8 @@ class TestReplyToComment:
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
             ),
+            patch(f"{_ENGAGE}.ensure_page_healthy", new_callable=AsyncMock),
+            patch(f"{_ENGAGE}.ensure_engagement_allowed", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "reply_to_comment")
@@ -772,6 +869,8 @@ class TestLikeComment:
                 new_callable=AsyncMock,
                 side_effect=_goto_and_check,
             ),
+            patch(f"{_ENGAGE}.ensure_page_healthy", new_callable=AsyncMock),
+            patch(f"{_ENGAGE}.ensure_engagement_allowed", new_callable=AsyncMock),
             patch(f"{_ENGAGE}.detect_rate_limit_post_action", new_callable=AsyncMock),
         ):
             tool_fn = await get_tool_fn(mcp, "like_comment")
@@ -910,6 +1009,77 @@ class TestRespondToInvitation:
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
+    async def test_accept_falls_back_to_css_button_lookup(self, isolate_safety):
+        from fastmcp import FastMCP
+        from linkedin_mcp_server.tools.network import register_network_tools
+
+        clicked = MagicMock(click=AsyncMock())
+
+        missing_button = MagicMock()
+        missing_button.count = AsyncMock(return_value=0)
+        missing_button.first = MagicMock()
+
+        css_button = MagicMock()
+        css_button.count = AsyncMock(return_value=1)
+        css_button.first = clicked
+
+        anchor = MagicMock()
+        anchor.count = AsyncMock(return_value=1)
+        anchor.get_attribute = AsyncMock(return_value="/in/testuser")
+
+        def _row_locator(selector: str):
+            if selector == 'a[href*="/in/"]':
+                return MagicMock(first=anchor, count=anchor.count)
+            if selector == "button[aria-label*='Accept' i]":
+                return css_button
+            return missing_button
+
+        row = MagicMock()
+        row.locator = MagicMock(side_effect=_row_locator)
+        row.get_by_role = MagicMock(return_value=missing_button)
+
+        loc = MagicMock()
+        loc.count = AsyncMock(return_value=1)
+        loc.nth = MagicMock(return_value=row)
+
+        chain_mock = MagicMock(resolve=AsyncMock(return_value=loc))
+
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/mynetwork/invitation-manager/")
+            .build()
+        )
+        browser = _make_browser(page)
+
+        mcp = FastMCP("test")
+        register_network_tools(mcp)
+
+        with (
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
+            patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
+            patch(f"{_NET}.SELECTORS", {"network": {"invitation_rows": chain_mock}}),
+        ):
+            tool_fn = await get_tool_fn(mcp, "respond_to_invitation")
+            result = await tool_fn(
+                profile_url="testuser",
+                action="accept",
+                confirm=True,
+                dry_run=False,
+            )
+
+        assert result["status"] == "success"
+        clicked.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_decline(self, isolate_safety):
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.network import register_network_tools
@@ -964,6 +1134,69 @@ class TestRespondToInvitation:
         assert result["status"] == "error"
         assert result["error_code"] == "validation_error"
 
+    @pytest.mark.asyncio
+    async def test_missing_button_returns_element_not_found(self, isolate_safety):
+        from fastmcp import FastMCP
+        from linkedin_mcp_server.tools.network import register_network_tools
+
+        missing_button = MagicMock()
+        missing_button.count = AsyncMock(return_value=0)
+        missing_button.first = MagicMock()
+
+        anchor = MagicMock()
+        anchor.count = AsyncMock(return_value=1)
+        anchor.get_attribute = AsyncMock(return_value="/in/testuser")
+
+        def _row_locator(selector: str):
+            if selector == 'a[href*="/in/"]':
+                return MagicMock(first=anchor, count=anchor.count)
+            return missing_button
+
+        row = MagicMock()
+        row.locator = MagicMock(side_effect=_row_locator)
+        row.get_by_role = MagicMock(return_value=missing_button)
+
+        loc = MagicMock()
+        loc.count = AsyncMock(return_value=1)
+        loc.nth = MagicMock(return_value=row)
+
+        chain_mock = MagicMock(resolve=AsyncMock(return_value=loc))
+
+        page = (
+            MockPageBuilder()
+            .on_goto("https://www.linkedin.com/mynetwork/invitation-manager/")
+            .build()
+        )
+        browser = _make_browser(page)
+
+        mcp = FastMCP("test")
+        register_network_tools(mcp)
+
+        with (
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
+            patch(f"{_NET}.SELECTORS", {"network": {"invitation_rows": chain_mock}}),
+        ):
+            tool_fn = await get_tool_fn(mcp, "respond_to_invitation")
+            result = await tool_fn(
+                profile_url="testuser",
+                action="accept",
+                confirm=True,
+                dry_run=False,
+            )
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "element_not_found"
+        assert "Chrome MCP" in result["message"]
+
 
 # ---------------------------------------------------------------------------
 # UI Fallback Branches
@@ -972,7 +1205,7 @@ class TestRespondToInvitation:
 
 class TestConnectionRequestFallback:
     @pytest.mark.asyncio
-    async def test_more_actions_connect_fallback(self, isolate_safety):
+    async def test_more_actions_connect_fallback(self, isolate_safety, monkeypatch):
         """When no direct Connect button, falls back to More actions → menuitem Connect."""
         from fastmcp import FastMCP
         from linkedin_mcp_server.tools.network import register_network_tools
@@ -981,7 +1214,7 @@ class TestConnectionRequestFallback:
         connect_btn = MagicMock()
         connect_btn.count = AsyncMock(return_value=0)
 
-        # Menuitem Connect found
+        # Menuitem Connect found; click resolves cleanly through overlay helper.
         menu_connect = MagicMock()
         menu_connect.count = AsyncMock(return_value=1)
         menu_connect.first = MagicMock(click=AsyncMock())
@@ -999,6 +1232,16 @@ class TestConnectionRequestFallback:
             )
         )
         browser = _make_browser(page)
+
+        # D.1 R2 routes the More-actions click through SELECTORS["network"]["more_actions"]
+        # via _click_with_overlay_protection. Patch the chain to resolve to a locator
+        # whose click succeeds (no overlay scenario for this happy-path test).
+        more_locator = MagicMock()
+        more_locator.click = AsyncMock()
+        more_actions_chain = MagicMock()
+        more_actions_chain.find = AsyncMock(return_value=more_locator)
+        from linkedin_mcp_server.core.selectors import SELECTORS
+        monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
 
         mcp = FastMCP("test")
         register_network_tools(mcp)
@@ -1025,6 +1268,79 @@ class TestConnectionRequestFallback:
             )
         assert result["status"] == "success"
         menu_connect.first.click.assert_awaited_once()
+        more_locator.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_overlay_intercept_returns_element_not_found_envelope(
+        self, isolate_safety, monkeypatch
+    ):
+        """D.1 R2 — when overlay protection exhausts both .click() and JS fallback,
+        the full run_write_tool pipeline returns the structured envelope:
+        status=error, error_code=element_not_found, data.overlay_suspected=True.
+
+        This exercises the real run_write_tool path (not a stubbed wrapper) so we
+        verify the exception-to-envelope contract end-to-end.
+        """
+        from fastmcp import FastMCP
+        from patchright.async_api import TimeoutError as PlaywrightTimeoutError
+        from linkedin_mcp_server.tools.network import register_network_tools
+
+        # No direct Connect button → forces the More-actions branch.
+        connect_btn = MagicMock()
+        connect_btn.count = AsyncMock(return_value=0)
+
+        # More button .click() raises (overlay), JS fallback also raises.
+        more_locator = MagicMock()
+        more_locator.click = AsyncMock(side_effect=PlaywrightTimeoutError("intercepted"))
+        more_locator.element_handle = AsyncMock(return_value=object())
+
+        more_actions_chain = MagicMock()
+        more_actions_chain.find = AsyncMock(return_value=more_locator)
+        from linkedin_mcp_server.core.selectors import SELECTORS
+        monkeypatch.setitem(SELECTORS["network"], "more_actions", more_actions_chain)
+
+        page = (
+            MockPageBuilder().on_goto("https://www.linkedin.com/in/testuser/").build()
+        )
+        page.get_by_role = MagicMock(
+            side_effect=lambda role, name=None, **kw: (
+                connect_btn
+                if role == "button" and name == "Connect"
+                else MagicMock(count=AsyncMock(return_value=0))
+            )
+        )
+        # JS evaluate fallback also fails — exhausts overlay protection.
+        page.evaluate = AsyncMock(side_effect=RuntimeError("js click failed"))
+        browser = _make_browser(page)
+
+        mcp = FastMCP("test")
+        register_network_tools(mcp)
+
+        with (
+            patch(
+                f"{_NET}.get_or_create_browser",
+                new_callable=AsyncMock,
+                return_value=browser,
+            ),
+            patch(
+                f"{_NET}.goto_and_check",
+                new_callable=AsyncMock,
+                side_effect=_goto_and_check,
+            ),
+            patch(f"{_NET}.handle_modal_close", new_callable=AsyncMock),
+            patch(f"{_NET}.click_element", new_callable=AsyncMock),
+            patch(f"{_NET}.detect_rate_limit_post_action", new_callable=AsyncMock),
+        ):
+            tool_fn = await get_tool_fn(mcp, "send_connection_request")
+            result = await tool_fn(
+                profile_url="testuser",
+                confirm=True,
+                dry_run=False,
+            )
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "element_not_found"
+        assert result["data"]["overlay_suspected"] is True
 
 
 class TestFollowPersonFallback:

@@ -3,9 +3,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from linkedin_mcp_server.config.schema import AppConfig
 from linkedin_mcp_server.drivers.browser import (
+    _goto_feed_with_retry,
     get_or_create_browser,
     reset_browser_for_testing,
 )
@@ -26,6 +28,10 @@ def _mock_config(monkeypatch, tmp_path):
     config.browser.user_data_dir = str(tmp_path / "profile")
     monkeypatch.setattr(
         "linkedin_mcp_server.drivers.browser.get_config", lambda: config
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.drivers.browser.ensure_browser_binary",
+        lambda *, headless: None,
     )
 
 
@@ -117,3 +123,47 @@ async def test_singleton_returns_existing_browser(monkeypatch):
     assert first is second
     # Constructor should only be called once
     ctor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_goto_feed_with_retry_retries_timeout_once(monkeypatch):
+    page = MagicMock()
+    page.goto = AsyncMock(
+        side_effect=[
+            PlaywrightTimeoutError("navigation timed out"),
+            None,
+        ]
+    )
+
+    backoff = AsyncMock(return_value=3.0)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.drivers.browser.backoff_with_jitter", backoff
+    )
+
+    await _goto_feed_with_retry(page)
+
+    assert page.goto.await_count == 2
+    first_call = page.goto.await_args_list[0]
+    assert first_call.kwargs["wait_until"] == "domcontentloaded"
+    assert first_call.kwargs["timeout"] == 45_000
+    backoff.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_goto_feed_with_retry_respects_higher_config_timeout(
+    monkeypatch, tmp_path
+):
+    config = AppConfig()
+    config.browser.user_data_dir = str(tmp_path / "profile")
+    config.browser.default_timeout = 60_000
+    monkeypatch.setattr(
+        "linkedin_mcp_server.drivers.browser.get_config", lambda: config
+    )
+
+    page = MagicMock()
+    page.goto = AsyncMock(return_value=None)
+
+    await _goto_feed_with_retry(page)
+
+    page.goto.assert_awaited_once()
+    assert page.goto.await_args_list[0].kwargs["timeout"] == 60_000

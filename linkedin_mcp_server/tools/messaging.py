@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from typing import Any
+from urllib.parse import urljoin
 
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
@@ -58,6 +59,72 @@ def _parse_message_item(text: str) -> dict[str, str]:
         "text": message,
         "timestamp": timestamp,
     }
+
+
+def _absolute_linkedin_url(href: str | None) -> str | None:
+    if not href:
+        return None
+    return urljoin("https://www.linkedin.com", href)
+
+
+async def _extract_thread_url(row: Any) -> str | None:
+    try:
+        href = await row.evaluate(
+            """(el) => {
+                const selectors = [
+                  "a[href*='/messaging/thread/']",
+                  "[data-thread-id]",
+                  "[data-conversation-id]",
+                ];
+                const directLink = el.querySelector("a[href*='/messaging/thread/']");
+                if (directLink) {
+                  return directLink.getAttribute("href");
+                }
+                const nodes = [el, ...el.querySelectorAll("*")];
+                for (const node of nodes.slice(0, 40)) {
+                  const attrs = [
+                    node.getAttribute?.("href"),
+                    node.getAttribute?.("data-thread-id"),
+                    node.getAttribute?.("data-conversation-id"),
+                    node.getAttribute?.("data-id"),
+                  ];
+                  for (const value of attrs) {
+                    if (!value) continue;
+                    const match = String(value).match(/\\/messaging\\/thread\\/[^/?]+/);
+                    if (match) return match[0];
+                  }
+                }
+                return null;
+            }"""
+        )
+    except Exception:
+        href = None
+
+    return _absolute_linkedin_url(href)
+
+
+async def _extract_participant_profile_url(row: Any) -> str | None:
+    try:
+        href = await row.evaluate(
+            """(el) => {
+                const directLink = el.querySelector("a[href*='/in/']");
+                if (directLink) {
+                  return directLink.getAttribute("href");
+                }
+                const nodes = [el, ...el.querySelectorAll("*")];
+                for (const node of nodes.slice(0, 40)) {
+                  const hrefValue = node.getAttribute?.("href");
+                  if (hrefValue && /\\/in\\//.test(hrefValue)) {
+                    return hrefValue;
+                  }
+                }
+                return null;
+            }"""
+        )
+    except Exception:
+        href = None
+
+    return _absolute_linkedin_url(href)
 
 
 def register_messaging_tools(mcp: FastMCP) -> None:
@@ -160,26 +227,19 @@ def register_messaging_tools(mcp: FastMCP) -> None:
                 except Exception:
                     pass
 
-                # Try to find thread link
-                thread_id_val = None
-                href = None
-                link = row.locator("a[href*='/messaging/thread/']").first
-                try:
-                    if await link.count() > 0:
-                        href = await link.get_attribute("href")
-                        thread_id_val = (
-                            extract_thread_id_from_url(href or "") if href else None
-                        )
-                        if href and href.startswith("/"):
-                            href = f"https://www.linkedin.com{href}"
-                except Exception:
-                    pass
+                thread_url = await _extract_thread_url(row)
+                participant_profile_url = await _extract_participant_profile_url(row)
+                thread_id_val = (
+                    extract_thread_id_from_url(thread_url or "") if thread_url else None
+                )
 
                 conversations.append(
                     {
                         **parsed,
-                        "profile_url": href,
+                        "profile_url": thread_url,
+                        "thread_url": thread_url,
                         "thread_id": thread_id_val,
+                        "participant_profile_url": participant_profile_url,
                     }
                 )
 
@@ -202,14 +262,17 @@ def register_messaging_tools(mcp: FastMCP) -> None:
     )
     async def read_conversation(
         thread_id: str | None = None,
+        thread_url: str | None = None,
         profile_url: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Read messages from a conversation by thread id or profile URL."""
+        """Read messages from a conversation by thread id, thread URL, or profile URL."""
 
         async def _fetch() -> dict[str, Any]:
-            if not thread_id and not profile_url:
-                raise ValueError("Either thread_id or profile_url must be provided")
+            if not thread_id and not thread_url and not profile_url:
+                raise ValueError(
+                    "Either thread_id, thread_url, or profile_url must be provided"
+                )
 
             browser = await get_or_create_browser()
             page = browser.page
@@ -220,9 +283,15 @@ def register_messaging_tools(mcp: FastMCP) -> None:
                 )
 
             resolved_thread_id = thread_id
-            if thread_id:
+            if thread_url:
+                resolved_thread_id = extract_thread_id_from_url(thread_url)
+                if not resolved_thread_id:
+                    raise ValueError("Invalid LinkedIn thread URL")
+
+            if resolved_thread_id:
                 await goto_and_check(
-                    page, f"https://www.linkedin.com/messaging/thread/{thread_id}/"
+                    page,
+                    f"https://www.linkedin.com/messaging/thread/{resolved_thread_id}/",
                 )
             else:
                 profile = normalize_profile_url(profile_url or "")

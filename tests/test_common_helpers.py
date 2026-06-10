@@ -9,16 +9,20 @@ from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from linkedin_mcp_server.core.exceptions import (
     ConcurrencyError,
+    ElementNotFoundError,
     InteractionError,
     QuotaExceededError,
     RateLimitError,
     SelectorError,
 )
 from linkedin_mcp_server.tools._common import (
+    ensure_engagement_allowed,
+    effective_navigation_timeout_ms,
     error_code_from_exception,
     extract_profile_slug,
     extract_thread_id_from_url,
     goto_and_check,
+    normalize_post_reference,
     normalize_profile_url,
     parse_count,
     run_read_tool,
@@ -120,6 +124,31 @@ class TestExtractThreadId:
 
 
 # ---------------------------------------------------------------------------
+# normalize_post_reference
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizePostReference:
+    def test_accepts_full_post_url(self):
+        result = normalize_post_reference(
+            "https://www.linkedin.com/feed/update/urn:li:activity:123/"
+        )
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+
+    def test_accepts_relative_post_path(self):
+        result = normalize_post_reference("/feed/update/urn:li:activity:123")
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+
+    def test_accepts_raw_activity_urn(self):
+        result = normalize_post_reference("urn:li:activity:123")
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+
+    def test_rejects_non_post_url(self):
+        with pytest.raises(ValueError):
+            normalize_post_reference("https://www.linkedin.com/in/user/")
+
+
+# ---------------------------------------------------------------------------
 # error_code_from_exception
 # ---------------------------------------------------------------------------
 
@@ -130,6 +159,7 @@ class TestExtractThreadId:
         (QuotaExceededError("q", tool_name="t", limit=1, used=1), "quota_exceeded"),
         (ConcurrencyError("c"), "concurrency_error"),
         (RateLimitError("r"), "rate_limit"),
+        (ElementNotFoundError("e"), "element_not_found"),
         (
             SelectorError("s", chain_name="c", tried_strategies=[], url=None),
             "selector_error",
@@ -142,6 +172,7 @@ class TestExtractThreadId:
         "quota_exceeded",
         "concurrency",
         "rate_limit",
+        "element_not_found",
         "selector",
         "interaction",
         "value_error",
@@ -150,6 +181,29 @@ class TestExtractThreadId:
 )
 def test_error_code_from_exception(exc, expected_code):
     assert error_code_from_exception(exc) == expected_code
+
+
+# ---------------------------------------------------------------------------
+# effective_navigation_timeout_ms
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveNavigationTimeoutMs:
+    def test_returns_minimum_when_config_default_is_lower(self, monkeypatch):
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.get_config",
+            lambda: MagicMock(browser=MagicMock(default_timeout=30000)),
+        )
+
+        assert effective_navigation_timeout_ms(45000) == 45000
+
+    def test_returns_config_default_when_it_exceeds_minimum(self, monkeypatch):
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.get_config",
+            lambda: MagicMock(browser=MagicMock(default_timeout=60000)),
+        )
+
+        assert effective_navigation_timeout_ms(45000) == 60000
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +227,27 @@ class TestRunReadTool:
             )
         assert result["status"] == "success"
         assert result["data"] == {"items": [1, 2]}
+        mock_release.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_success_promotes_reserved_warnings_to_envelope(self):
+        with (
+            patch(f"{_SAFETY_PREFIX}.ensure_authenticated", new_callable=AsyncMock),
+            patch(f"{_SAFETY_PREFIX}.acquire_browser_lock", new_callable=AsyncMock),
+            patch(f"{_SAFETY_PREFIX}.release_browser_lock") as mock_release,
+        ):
+            result = await run_read_tool(
+                action="test_read",
+                fetch_fn=AsyncMock(
+                    return_value={
+                        "items": [1, 2],
+                        "_warnings": ["partial data"],
+                    }
+                ),
+            )
+        assert result["status"] == "success"
+        assert result["data"] == {"items": [1, 2]}
+        assert result["warnings"] == ["partial data"]
         mock_release.assert_called_once()
 
     @pytest.mark.asyncio
@@ -267,10 +342,67 @@ class TestRunWriteTool:
         mock_record = AsyncMock()
         monkeypatch.setattr(f"{_SAFETY_PREFIX}.record_security_challenge", mock_record)
         result = await self._call(
-            execute_fn=AsyncMock(side_effect=RateLimitError("captcha detected"))
+            execute_fn=AsyncMock(
+                side_effect=RateLimitError(
+                    "captcha detected",
+                    challenge_type="captcha",
+                )
+            )
+        )
+        assert result["error_code"] == "captcha_required"
+        mock_record.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_payload_includes_challenge_metadata(self, monkeypatch):
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.record_security_challenge",
+            AsyncMock(
+                return_value={
+                    "consecutive_captchas": 1,
+                    "degraded": True,
+                    "degraded_until": "2030-01-01T00:00:00Z",
+                    "disabled_until": None,
+                }
+            ),
+        )
+        result = await self._call(
+            execute_fn=AsyncMock(
+                side_effect=RateLimitError(
+                    "CAPTCHA challenge detected.",
+                    suggested_wait_time=1800,
+                    challenge_type="captcha",
+                    context={"origin": "react_to_post"},
+                )
+            )
+        )
+        assert result["error_code"] == "captcha_required"
+        assert result["data"] == {
+            "origin": "react_to_post",
+            "challenge_type": "captcha",
+            "session_health": {
+                "consecutive_captchas": 1,
+                "degraded": True,
+                "degraded_until": "2030-01-01T00:00:00Z",
+                "disabled_until": None,
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_non_captcha_keeps_rate_limit_code(self, monkeypatch):
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.record_security_challenge",
+            AsyncMock(return_value={}),
+        )
+        result = await self._call(
+            execute_fn=AsyncMock(
+                side_effect=RateLimitError(
+                    "Too many requests.",
+                    suggested_wait_time=120,
+                    challenge_type="rate_limit",
+                )
+            )
         )
         assert result["error_code"] == "rate_limit"
-        mock_record.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_success_releases_lock(self, monkeypatch):
@@ -373,3 +505,26 @@ class TestGotoAndCheck:
             await goto_and_check(page, "https://www.linkedin.com/feed/")
 
         mock_backoff.assert_not_awaited()
+
+
+class TestEnsureEngagementAllowed:
+    @pytest.mark.asyncio
+    async def test_allows_when_not_degraded(self, monkeypatch):
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.is_engagement_degraded", lambda: False)
+
+        await ensure_engagement_allowed()
+
+    @pytest.mark.asyncio
+    async def test_blocks_when_degraded(self, monkeypatch):
+        monkeypatch.setattr(f"{_SAFETY_PREFIX}.is_engagement_degraded", lambda: True)
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.get_engagement_cooldown_seconds",
+            lambda: 600,
+        )
+        monkeypatch.setattr(
+            f"{_SAFETY_PREFIX}.get_session_health",
+            lambda: {"consecutive_captchas": 1, "degraded": True},
+        )
+
+        with pytest.raises(RateLimitError, match="temporarily degraded"):
+            await ensure_engagement_allowed()
