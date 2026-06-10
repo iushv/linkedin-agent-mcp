@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +153,37 @@ class BrowserManager:
         return Path(self.user_data_dir).parent / "cookies.json"
 
     @staticmethod
+    def _write_private_file(path: Path, content: str) -> None:
+        """Atomically write a file readable only by the current user.
+
+        The exported cookies include li_at, a bearer token for the whole
+        LinkedIn account, so the file must never be group/world readable.
+        """
+        tmp_path = path.with_name(path.name + ".tmp")
+        fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        os.replace(tmp_path, path)
+        if os.name == "posix":
+            os.chmod(path, 0o600)
+
+    @staticmethod
+    def _tighten_permissions(path: Path) -> None:
+        """Drop group/world access on an existing secrets file (POSIX only)."""
+        if os.name != "posix":
+            return
+        try:
+            if path.stat().st_mode & 0o077:
+                os.chmod(path, 0o600)
+                logger.info("Tightened cookie file permissions to 0600: %s", path)
+        except OSError:
+            logger.debug("Could not adjust cookie file permissions", exc_info=True)
+
+    @staticmethod
     def _normalize_cookie_domain(cookie: Any) -> dict[str, Any]:
         """Normalize cookie domain for cross-platform compatibility.
 
@@ -177,7 +209,7 @@ class BrowserManager:
                 for c in all_cookies
                 if "linkedin.com" in c.get("domain", "")
             ]
-            path.write_text(json.dumps(cookies, indent=2))
+            self._write_private_file(path, json.dumps(cookies, indent=2))
             logger.info("Exported %d LinkedIn cookies to %s", len(cookies), path)
             return True
         except Exception:
@@ -201,6 +233,8 @@ class BrowserManager:
         if not path.exists():
             logger.debug("No portable cookie file at %s", path)
             return False
+
+        self._tighten_permissions(path)
 
         try:
             all_cookies = json.loads(path.read_text())

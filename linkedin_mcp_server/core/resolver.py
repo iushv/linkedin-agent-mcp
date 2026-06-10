@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,12 @@ def _normalize_key(value: str) -> str:
 
 def _ensure_state_dir() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    # The state dir holds auth cookies and audit logs — owner-only access.
+    if os.name == "posix":
+        try:
+            os.chmod(STATE_DIR, 0o700)
+        except OSError:
+            pass
 
 
 def _now_utc() -> datetime:

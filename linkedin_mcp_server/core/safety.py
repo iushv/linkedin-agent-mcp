@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -72,6 +73,12 @@ def challenge_cooldown_seconds(challenge_count: int) -> int:
 
 def _ensure_state_dir() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    # The state dir holds auth cookies and audit logs — owner-only access.
+    if os.name == "posix":
+        try:
+            os.chmod(STATE_DIR, 0o700)
+        except OSError:
+            pass
 
 
 async def _read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
