@@ -6,6 +6,7 @@ context. Implements a singleton pattern for browser reuse across tool calls with
 automatic profile persistence.
 """
 
+import asyncio
 import logging
 import re
 import shutil
@@ -265,7 +266,8 @@ async def get_or_create_browser(
             _headless and _browser_binary_verified_mode is False
         )
         if requires_check:
-            ensure_browser_binary(headless=_headless)
+            # Runs subprocess dry-run/install (up to 120s) — keep it off the loop.
+            await asyncio.to_thread(ensure_browser_binary, headless=_headless)
             _browser_binary_verified_mode = (
                 True if _headless else (_browser_binary_verified_mode or False)
             )
