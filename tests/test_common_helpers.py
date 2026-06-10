@@ -191,7 +191,7 @@ def test_error_code_from_exception(exc, expected_code):
 class TestEffectiveNavigationTimeoutMs:
     def test_returns_minimum_when_config_default_is_lower(self, monkeypatch):
         monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.get_config",
+            "linkedin_mcp_server.core.navigation.get_config",
             lambda: MagicMock(browser=MagicMock(default_timeout=30000)),
         )
 
@@ -199,7 +199,7 @@ class TestEffectiveNavigationTimeoutMs:
 
     def test_returns_config_default_when_it_exceeds_minimum(self, monkeypatch):
         monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.get_config",
+            "linkedin_mcp_server.core.navigation.get_config",
             lambda: MagicMock(browser=MagicMock(default_timeout=60000)),
         )
 
@@ -445,11 +445,15 @@ class TestGotoAndCheck:
         page.goto = AsyncMock()
 
         monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.get_config",
+            "linkedin_mcp_server.core.navigation.get_config",
             lambda: MagicMock(browser=MagicMock(default_timeout=5000)),
         )
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}._respect_navigation_gap", AsyncMock())
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}.detect_rate_limit", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation._respect_navigation_gap", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation.detect_rate_limit", AsyncMock()
+        )
 
         await goto_and_check(
             page,
@@ -469,13 +473,19 @@ class TestGotoAndCheck:
         page.goto = AsyncMock(side_effect=[PlaywrightTimeoutError("boom"), None])
 
         monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.get_config",
+            "linkedin_mcp_server.core.navigation.get_config",
             lambda: MagicMock(browser=MagicMock(default_timeout=5000)),
         )
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}._respect_navigation_gap", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation._respect_navigation_gap", AsyncMock()
+        )
         mock_backoff = AsyncMock(return_value=0.0)
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}.backoff_with_jitter", mock_backoff)
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}.detect_rate_limit", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation.backoff_with_jitter", mock_backoff
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation.detect_rate_limit", AsyncMock()
+        )
 
         await goto_and_check(page, "https://www.linkedin.com/feed/")
 
@@ -493,13 +503,19 @@ class TestGotoAndCheck:
         )
 
         monkeypatch.setattr(
-            f"{_SAFETY_PREFIX}.get_config",
+            "linkedin_mcp_server.core.navigation.get_config",
             lambda: MagicMock(browser=MagicMock(default_timeout=5000)),
         )
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}._respect_navigation_gap", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation._respect_navigation_gap", AsyncMock()
+        )
         mock_backoff = AsyncMock(return_value=0.0)
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}.backoff_with_jitter", mock_backoff)
-        monkeypatch.setattr(f"{_SAFETY_PREFIX}.detect_rate_limit", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation.backoff_with_jitter", mock_backoff
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.core.navigation.detect_rate_limit", AsyncMock()
+        )
 
         with pytest.raises(RateLimitError):
             await goto_and_check(page, "https://www.linkedin.com/feed/")

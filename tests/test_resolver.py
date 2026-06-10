@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import linkedin_mcp_server.core.resolver as resolver
+import linkedin_mcp_server.resolver as resolver
 
 
 @pytest.fixture(autouse=True)

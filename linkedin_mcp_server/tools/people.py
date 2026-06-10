@@ -18,7 +18,7 @@ from linkedin_mcp_server.core.pagination import (
     build_paginated_response,
     decode_cursor,
 )
-from linkedin_mcp_server.core.resolver import (
+from linkedin_mcp_server.resolver import (
     ResolvedCompany,
     ResolvedGeo,
     resolve_company,

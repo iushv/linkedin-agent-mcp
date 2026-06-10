@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from linkedin_mcp_server.core.resolver import ResolvedCompany, ResolvedGeo
+from linkedin_mcp_server.resolver import ResolvedCompany, ResolvedGeo
 
 
 async def get_tool_fn(

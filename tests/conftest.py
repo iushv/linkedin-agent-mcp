@@ -22,7 +22,7 @@ def isolate_safety(tmp_path, monkeypatch):
 def reset_singletons():
     """Reset global state for test isolation."""
     from linkedin_mcp_server.config import reset_config
-    from linkedin_mcp_server.core.resolver import reset_resolver_state
+    from linkedin_mcp_server.resolver import reset_resolver_state
     from linkedin_mcp_server.core.throttle import AdaptiveThrottle
     from linkedin_mcp_server.drivers.browser import reset_browser_for_testing
 

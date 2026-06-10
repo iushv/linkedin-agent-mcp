@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import quote_plus, unquote, urlparse
 
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
-from linkedin_mcp_server.tools._common import goto_and_check
+from linkedin_mcp_server.core.navigation import goto_and_check
 
 logger = logging.getLogger(__name__)
 
