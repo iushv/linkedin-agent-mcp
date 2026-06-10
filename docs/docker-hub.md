@@ -19,7 +19,9 @@ A Model Context Protocol (MCP) server that connects AI assistants to LinkedIn. A
 - `search_people` and `get_company_people` return paginated `results` arrays with normalized person cards and resolver metadata. `search_people` also accepts `match_mode=auto|strict|broad` to control fallback broadening.
 - `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays.
 - Profile-write tools return standardized write envelopes with additive `data` for previews and confirmed changes.
-- `get_my_post_analytics` returns parsed post entries under `data.posts`, including `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
+- `browse_feed` and `get_my_post_analytics` add `post_urn` alongside `url`, `get_post_reactions` / `get_post_commenters` return paginated engagement results, and `get_conversations` adds `thread_url` plus `participant_profile_url`.
+- Engagement-style writes accept canonical post URLs, relative post paths, or raw `urn:li:activity:*` references and pause follow-up engagement attempts after CAPTCHA/checkpoint challenges.
+- `get_my_post_analytics` returns parsed post entries under `data.posts`, including `author`, `url`, `post_urn`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 ## Quick Start
 
@@ -58,7 +60,7 @@ uvx linkedin-scraper-mcp --login
 |----------|---------|-------------|
 | `USER_DATA_DIR` | `~/.linkedin-mcp/profile` | Path to persistent browser profile directory |
 | `LOG_LEVEL` | `WARNING` | Logging level: DEBUG, INFO, WARNING, ERROR |
-| `TIMEOUT` | `5000` | Browser timeout in milliseconds |
+| `TIMEOUT` | `30000` | Browser timeout in milliseconds |
 | `USER_AGENT` | - | Custom browser user agent |
 | `TRANSPORT` | `stdio` | Transport mode: stdio, streamable-http |
 | `HOST` | `127.0.0.1` | HTTP server host (for streamable-http transport) |
@@ -78,7 +80,7 @@ uvx linkedin-scraper-mcp --login
       "args": [
         "run", "-i", "--rm",
         "-v", "~/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
-        "-e", "TIMEOUT=10000",
+        "-e", "TIMEOUT=60000",
         "iushv/linkedin-agent-mcp"
       ]
     }

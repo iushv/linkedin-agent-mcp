@@ -10,6 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Development dependencies: `uv sync --group dev`
 - Bump version: `uv version --bump minor` (or `major`, `patch`) - this is the **only manual step** for a release. The GitHub Actions release workflow (`.github/workflows/release.yml`) automatically handles: manifest.json/docker-compose.yml version updates, git tag, Docker build & push, DXT extension, GitHub release, and PyPI publish. After the workflow completes, manually file a PR in the MCP registry to update the version.
 - Install browser: `uv run patchright install chromium`
+- Patchright bump checklist:
+  1. Change `patchright==X.Y.Z` in `pyproject.toml`
+  2. Run `uv lock && uv sync`
+  3. Run `uv run patchright install chromium`
+  4. Run `uv run python scripts/diag_dom.py`
 - Run server locally: `uv run -m linkedin_mcp_server --no-headless`
 - Run via uvx (PyPI): `uvx linkedin-scraper-mcp`
 - Run in Docker: `docker run -it --rm -v ~/.linkedin-mcp:/home/pwuser/.linkedin-mcp iushv/linkedin-agent-mcp:latest`
@@ -73,6 +78,8 @@ This is a **LinkedIn MCP (Model Context Protocol) Server** that enables AI assis
 | `add_profile_skills` | Add skills to the logged-in profile |
 | `set_featured_skills` | Best-effort featured skill ordering |
 | `get_job_recommendations` | Get personalized job recommendations |
+| `get_post_reactions` | List people who reacted to a LinkedIn post |
+| `get_post_commenters` | List top-level commenters on a LinkedIn post |
 | `close_session` | Close browser session and clean up resources |
 
 **Tool Return Format:**
@@ -85,7 +92,11 @@ Additive structured fields:
 - `search_people` and `get_company_people` return paginated `results` arrays with normalized person-card fields plus `filters_applied` and `warnings`. `search_people.match_mode` controls how aggressively the tool broadens when exact matches are sparse.
 - `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays with normalized job-card fields.
 - Profile-write tools return standardized write envelopes and surface preview/change details under `data`.
-- `get_my_post_analytics` returns parsed post entries under `data.posts` with `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
+- `browse_feed` and `get_my_post_analytics` add `post_urn` alongside `url` so feed/activity posts remain actionable even when LinkedIn hides a visible permalink.
+- `get_post_reactions` and `get_post_commenters` return paginated `results` arrays for post-engagement outreach workflows.
+- `get_conversations` adds `thread_url` and `participant_profile_url`, and `read_conversation` accepts `thread_url` in addition to `thread_id` / `profile_url`.
+- Engagement-style write tools accept canonical post URLs, relative post paths, or raw `urn:li:activity:*` references and apply a temporary engagement cooldown after CAPTCHA/checkpoint challenges.
+- `get_my_post_analytics` returns parsed post entries under `data.posts` with `author`, `url`, `post_urn`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 **Scraping Architecture (`scraping/`):**
 

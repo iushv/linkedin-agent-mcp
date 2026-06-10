@@ -58,6 +58,8 @@ What has Anthropic been posting about recently? https://www.linkedin.com/company
 | `add_profile_skills` | Add new skills to the logged-in profile with preview support | Working |
 | `set_featured_skills` | Best-effort featured-skill ordering flow | Experimental |
 | `get_job_recommendations` | Read LinkedIn's personalized job recommendations feed | Working |
+| `get_post_reactions` | List people who reacted to a LinkedIn post, including reaction type | Working |
+| `get_post_commenters` | List top-level commenters on a LinkedIn post with comment text | Working |
 | `close_session` | Close browser session and clean up resources | Working |
 
 > [!IMPORTANT]
@@ -71,7 +73,11 @@ Some tools return additive structured fields alongside the existing raw text out
 - `search_people` and `get_company_people` return paginated `results` arrays with normalized `PersonCard` fields and `filters_applied` / `warnings` metadata. `search_people.match_mode` controls whether the tool stays strict, broadens automatically, or runs a broad company/background search immediately.
 - `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays with normalized `JobCard` fields.
 - Profile-write tools (`update_profile_headline`, `set_open_to_work`, `add_profile_skills`, `set_featured_skills`) support preview-first flows via `dry_run` or `confirm=false` and return structured write envelopes with additive `data`.
-- `get_my_post_analytics` returns the standard read envelope and exposes parsed posts at `data.posts`. Each post object includes `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
+- `browse_feed` and `get_my_post_analytics` return additive post identifiers. Each parsed post can now include both `url` and `post_urn`, which lets downstream tools keep working even when LinkedIn omits a visible permalink.
+- `get_post_reactions` and `get_post_commenters` return paginated `results` arrays so callers can turn post engagement into warm-outreach lists.
+- `get_conversations` now adds `thread_url` and `participant_profile_url`. `profile_url` is preserved for compatibility, while `read_conversation` also accepts `thread_url`.
+- Engagement-style writes (`react_to_post`, `comment_on_post`, `reply_to_comment`, `like_comment`, `repost`) accept canonical post URLs, relative LinkedIn post paths, or raw `urn:li:activity:*` references. After a detected CAPTCHA/checkpoint, those tools enter a temporary cooldown instead of repeatedly retrying live clicks.
+- `get_my_post_analytics` returns the standard read envelope and exposes parsed posts at `data.posts`. Each post object includes `author`, `url`, `post_urn`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 <br/>
 <br/>
@@ -128,7 +134,7 @@ This opens a browser for you to log in manually (5 minute timeout for 2FA, captc
 - `--port PORT` - HTTP server port (default: 8000)
 - `--path PATH` - HTTP server path (default: /mcp)
 - `--logout` - Clear stored LinkedIn browser profile
-- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 5000)
+- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 30000)
 - `--user-data-dir PATH` - Path to persistent browser profile directory (default: ~/.linkedin-mcp/profile)
 - `--chrome-path PATH` - Path to Chrome/Chromium executable (for custom browser installations)
 
@@ -181,9 +187,10 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 
 **Timeout issues:**
 
-- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 10000`
-- Users on slow connections may need higher values (e.g., 15000-30000ms)
-- Can also set via environment variable: `TIMEOUT=10000`
+- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 60000`
+- Slow connections or feed-heavy LinkedIn pages may need higher values (e.g., 60000-90000ms)
+- Feed and post-composer tools enforce a 45 s minimum; other tools enforce 15 s. `--timeout` can raise these floors but not lower them.
+- Can also set via environment variable: `TIMEOUT=60000`
 
 **Custom Chrome path:**
 
@@ -254,7 +261,7 @@ This opens a browser window where you log in manually (5 minute timeout for 2FA,
 - `--port PORT` - HTTP server port (default: 8000)
 - `--path PATH` - HTTP server path (default: /mcp)
 - `--logout` - Clear stored LinkedIn browser profile
-- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 5000)
+- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 30000)
 - `--user-data-dir PATH` - Path to persistent browser profile directory (default: ~/.linkedin-mcp/profile)
 - `--chrome-path PATH` - Path to Chrome/Chromium executable (rarely needed in Docker)
 
@@ -300,9 +307,10 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 
 **Timeout issues:**
 
-- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 10000`
-- Users on slow connections may need higher values (e.g., 15000-30000ms)
-- Can also set via environment variable: `TIMEOUT=10000`
+- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 60000`
+- Slow connections or feed-heavy LinkedIn pages may need higher values (e.g., 60000-90000ms)
+- Feed and post-composer tools enforce a 45 s minimum; other tools enforce 15 s. `--timeout` can raise these floors but not lower them.
+- Can also set via environment variable: `TIMEOUT=60000`
 
 **Custom Chrome path:**
 
@@ -357,9 +365,10 @@ Runtime server logs are emitted by FastMCP/Uvicorn.
 
 **Timeout issues:**
 
-- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 10000`
-- Users on slow connections may need higher values (e.g., 15000-30000ms)
-- Can also set via environment variable: `TIMEOUT=10000`
+- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 60000`
+- Slow connections or feed-heavy LinkedIn pages may need higher values (e.g., 60000-90000ms)
+- Feed and post-composer tools enforce a 45 s minimum; other tools enforce 15 s. `--timeout` can raise these floors but not lower them.
+- Can also set via environment variable: `TIMEOUT=60000`
 
 </details>
 
@@ -412,7 +421,7 @@ uv run -m linkedin_mcp_server
 - `--port PORT` - HTTP server port (default: 8000)
 - `--path PATH` - HTTP server path (default: /mcp)
 - `--logout` - Clear stored LinkedIn browser profile
-- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 5000)
+- `--timeout MS` - Browser timeout for page operations in milliseconds (default: 30000)
 - `--status` - Check if current session is valid and exit
 - `--user-data-dir PATH` - Path to persistent browser profile directory (default: ~/.linkedin-mcp/profile)
 - `--slow-mo MS` - Delay between browser actions in milliseconds (default: 0, useful for debugging)
@@ -511,9 +520,10 @@ uv run python scripts/test_live_tools.py \
 
 **Timeout issues:**
 
-- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 10000`
-- Users on slow connections may need higher values (e.g., 15000-30000ms)
-- Can also set via environment variable: `TIMEOUT=10000`
+- If pages fail to load or elements aren't found, try increasing the timeout: `--timeout 60000`
+- Slow connections or feed-heavy LinkedIn pages may need higher values (e.g., 60000-90000ms)
+- Feed and post-composer tools enforce a 45 s minimum; other tools enforce 15 s. `--timeout` can raise these floors but not lower them.
+- Can also set via environment variable: `TIMEOUT=60000`
 
 **Custom Chrome path:**
 
