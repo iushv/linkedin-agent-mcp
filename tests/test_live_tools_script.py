@@ -160,11 +160,11 @@ async def test_main_focus_read_conversation_uses_explicit_thread_id(
     assert FakeClient.calls == [("read_conversation", {"thread_id": "abc123"})]
 
 
-def test_expected_tools_match_registered_server_tools():
+async def test_expected_tools_match_registered_server_tools():
     from linkedin_mcp_server.server import create_mcp_server
 
     mcp = create_mcp_server()
-    registered = set(mcp._tool_manager._tools)
+    registered = {tool.name for tool in await mcp.list_tools()}
     assert live_tools.EXPECTED_TOOLS == registered
 
 
