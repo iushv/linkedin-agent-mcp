@@ -25,15 +25,27 @@ READ_TOOL_NAMES = {
     "get_company_posts",
     "get_job_details",
     "search_jobs",
+    "search_people",
+    "get_company_people",
+    "get_saved_jobs",
+    "get_job_recommendations",
     "browse_feed",
     "get_conversations",
     "read_conversation",
     "get_pending_invitations",
+    "get_engagement_health",
     "get_profile_analytics",
     "get_my_post_analytics",
+    "get_post_reactions",
+    "get_post_commenters",
 }
 
 WRITE_TOOL_NAMES = {
+    "save_job",
+    "update_profile_headline",
+    "set_open_to_work",
+    "add_profile_skills",
+    "set_featured_skills",
     "create_post",
     "create_poll",
     "delete_post",
@@ -138,6 +150,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Limit for get_pending_invitations.",
+    )
+    parser.add_argument(
+        "--list-limit",
+        type=int,
+        default=5,
+        help="Limit for paginated list-style tools.",
     )
     parser.add_argument(
         "--write-profile-url",
@@ -413,6 +431,27 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
             {"keywords": args.job_keywords, "location": args.job_location},
             "read",
         ),
+        ToolCase(
+            "search_people",
+            {
+                "keywords": args.job_keywords,
+                "location": args.job_location,
+                "match_mode": "broad",
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        ToolCase(
+            "get_company_people",
+            {
+                "company_name": args.company_name,
+                "title_keyword": args.job_keywords.split()[0],
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        ToolCase("get_saved_jobs", {"limit": args.list_limit}, "read"),
+        ToolCase("get_job_recommendations", {"limit": args.list_limit}, "read"),
         ToolCase("browse_feed", {"count": args.feed_count}, "read"),
         ToolCase(
             "get_conversations",
@@ -424,10 +463,21 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
             {"limit": args.invitation_limit},
             "read",
         ),
+        ToolCase("get_engagement_health", {}, "read"),
         ToolCase("get_profile_analytics", {}, "read"),
         ToolCase(
             "get_my_post_analytics",
             {"limit": args.analytics_limit},
+            "read",
+        ),
+        ToolCase(
+            "get_post_reactions",
+            {"post_url": args.post_url, "limit": args.list_limit},
+            "read",
+        ),
+        ToolCase(
+            "get_post_commenters",
+            {"post_url": args.post_url, "limit": args.list_limit},
             "read",
         ),
     ]
@@ -435,6 +485,55 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
 
 def build_write_cases(args: argparse.Namespace) -> list[ToolCase]:
     return [
+        ToolCase(
+            "save_job",
+            {
+                "job_url": f"https://www.linkedin.com/jobs/view/{args.job_id}/",
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "update_profile_headline",
+            {
+                "headline": "Live smoke dry-run headline validation",
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "set_open_to_work",
+            {
+                "enabled": True,
+                "visibility": "recruiters_only",
+                "job_titles": ["Python Developer"],
+                "job_types": ["full_time"],
+                "locations": [args.job_location],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "add_profile_skills",
+            {
+                "skills": ["Python", "Automation"],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "set_featured_skills",
+            {
+                "featured_skills": ["Python", "Automation"],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
         ToolCase(
             "create_post",
             {

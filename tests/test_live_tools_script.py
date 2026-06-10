@@ -75,6 +75,7 @@ def make_args(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "analytics_limit": 3,
         "conversation_limit": 5,
         "invitation_limit": 5,
+        "list_limit": 5,
         "write_profile_url": "https://www.linkedin.com/in/ayushkumar-exl/",
         "post_url": "https://www.linkedin.com/feed/update/urn:li:activity:1/",
         "skip_close_session": False,
@@ -157,6 +158,30 @@ async def test_main_focus_read_conversation_uses_explicit_thread_id(
 
     assert exit_code == 0
     assert FakeClient.calls == [("read_conversation", {"thread_id": "abc123"})]
+
+
+def test_expected_tools_match_registered_server_tools():
+    from linkedin_mcp_server.server import create_mcp_server
+
+    mcp = create_mcp_server()
+    registered = set(mcp._tool_manager._tools)
+    assert live_tools.EXPECTED_TOOLS == registered
+
+
+def test_build_read_cases_cover_declared_read_tools(tmp_path):
+    args = make_args(tmp_path)
+
+    case_names = {case.name for case in live_tools.build_read_cases(args)}
+
+    assert case_names == live_tools.READ_TOOL_NAMES - {"read_conversation"}
+
+
+def test_build_write_cases_cover_declared_write_tools(tmp_path):
+    args = make_args(tmp_path)
+
+    case_names = {case.name for case in live_tools.build_write_cases(args)}
+
+    assert case_names == live_tools.WRITE_TOOL_NAMES
 
 
 def test_validate_args_requires_focus_target(tmp_path):
