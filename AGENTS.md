@@ -60,27 +60,21 @@ This is a **LinkedIn MCP (Model Context Protocol) Server** that enables AI assis
 - **Profile Tools** (`tools/profile.py`) - Headline, Open To Work, and skill updates
 - **Recommendation Tools** (`tools/recommendations.py`) - Personalized job recommendations
 
-**Available MCP Tools:**
+**Available MCP Tools (36, ✍️ = write tool with confirm/dry_run gating):**
 
-| Tool | Description |
-|------|-------------|
-| `get_person_profile` | Get profile with explicit `sections` selection (experience, education, interests, honors, languages, contact_info) |
-| `get_company_profile` | Get company info with explicit `sections` selection (posts, jobs) |
-| `get_company_posts` | Get recent posts from company feed |
-| `get_job_details` | Get job posting details |
-| `search_jobs` | Search jobs by keywords and location |
-| `search_people` | Search LinkedIn members by keywords and resolved filters (`match_mode=auto|strict|broad`) |
-| `get_company_people` | Find people at a company with optional alumni/title filters |
-| `save_job` | Save a LinkedIn job posting |
-| `get_saved_jobs` | List the current account's saved jobs |
-| `update_profile_headline` | Update the logged-in profile headline |
-| `set_open_to_work` | Configure Open To Work preferences |
-| `add_profile_skills` | Add skills to the logged-in profile |
-| `set_featured_skills` | Best-effort featured skill ordering |
-| `get_job_recommendations` | Get personalized job recommendations |
-| `get_post_reactions` | List people who reacted to a LinkedIn post |
-| `get_post_commenters` | List top-level commenters on a LinkedIn post |
-| `close_session` | Close browser session and clean up resources |
+| Category | Tools |
+|----------|-------|
+| Profiles & people | `get_person_profile`, `get_company_profile`, `get_company_posts`, `search_people`, `get_company_people` |
+| Jobs | `search_jobs`, `get_job_details`, `save_job` ✍️, `get_saved_jobs`, `get_job_recommendations` |
+| Feed & analytics | `browse_feed`, `get_post_reactions`, `get_post_commenters`, `get_my_post_analytics`, `get_profile_analytics` |
+| Publishing | `create_post` ✍️, `create_poll` ✍️, `repost` ✍️, `delete_post` ✍️ (destructive) |
+| Engagement | `react_to_post` ✍️, `comment_on_post` ✍️, `reply_to_comment` ✍️, `like_comment` ✍️, `get_engagement_health` |
+| Messaging | `get_conversations`, `read_conversation`, `send_message` ✍️ |
+| Network | `send_connection_request` ✍️, `get_pending_invitations`, `respond_to_invitation` ✍️, `follow_person` ✍️ |
+| Own profile | `update_profile_headline` ✍️, `set_open_to_work` ✍️, `add_profile_skills` ✍️, `set_featured_skills` ✍️ |
+| Session | `close_session` |
+
+Write-tool safety: confirmation required (`confirm=true` or allowlist in `~/.linkedin-mcp/config.json`), `dry_run` previews, daily/session quotas, CAPTCHA cooldown escalation, and a hash-only audit log at `~/.linkedin-mcp/audit.log`. The authoritative tool list lives in `tests/test_server.py::EXPECTED_TOOLS` — update it, this table, and README.md together when adding tools.
 
 **Tool Return Format:**
 

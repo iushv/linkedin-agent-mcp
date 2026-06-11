@@ -4,14 +4,16 @@ A Model Context Protocol (MCP) server that connects AI assistants to LinkedIn. A
 
 ## Features
 
-- **Profile Access**: Get detailed LinkedIn profile information
-- **Company Profiles**: Extract comprehensive company data
-- **Job Details**: Retrieve job posting information
-- **Job Search**: Search for jobs with keywords and location filters, including structured `jobs` entries with `title`, `company`, `location`, `job_id`, and `url` when available
-- **People Search**: Find LinkedIn members by company, background, title keywords, and location
-- **Saved Jobs Queue**: Save jobs and read the current saved-jobs list
-- **Profile Job Search Controls**: Update headline, Open To Work, and profile skills with preview-first flows
-- **Company Posts**: Get recent posts from a company's LinkedIn feed
+36 tools across reads and gated writes — full per-tool table in the [repository README](https://github.com/iushv/linkedin-agent-mcp#features--tool-status).
+
+- **Profiles, Companies & People**: profile/company extraction, company posts, people search with resolver filters
+- **Jobs**: search, details, saved-jobs queue, personalized recommendations
+- **Feed & Analytics**: browse feed, post reactions/commenters, own-post and profile analytics
+- **Publishing & Engagement** (write): create posts/polls, repost, delete, react, comment, reply, like
+- **Messaging & Network** (write): conversations, direct messages, connection requests, invitations, follows
+- **Own Profile** (write): headline, Open To Work, skills with preview-first flows
+
+All write tools require `confirm=true` (or a config allowlist), support `dry_run` previews, enforce daily quotas, back off after CAPTCHA challenges, and append hash-only entries to an audit log.
 
 ## Structured Outputs
 

@@ -42,25 +42,93 @@ What has Anthropic been posting about recently? https://www.linkedin.com/company
 
 ## Features & Tool Status
 
+All 36 tools, grouped by category. Write tools (marked ✍️) never act without `confirm=true` (or an explicit allowlist entry in `~/.linkedin-mcp/config.json`) and support `dry_run=true` previews — see the [safety model](#write-tool-safety-model) below.
+
+### Profiles, Companies & People
+
 | Tool | Description | Status |
 |------|-------------|--------|
 | `get_person_profile` | Get profile info with explicit section selection (experience, education, interests, honors, languages, contact_info) | Working |
 | `get_company_profile` | Extract company information with explicit section selection (posts, jobs) | Working |
 | `get_company_posts` | Get recent posts from a company's LinkedIn feed | Working |
-| `search_jobs` | Search for jobs with keywords and location filters | Working |
-| `get_job_details` | Get detailed information about a specific job posting | Working |
 | `search_people` | Search LinkedIn members by keywords, current company, past company, and location; supports `match_mode=auto|strict|broad` | Working |
 | `get_company_people` | Find people at a target company with optional past-company and title filters | Working |
-| `save_job` | Save a LinkedIn job to the current account's queue | Working |
+
+### Jobs
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `search_jobs` | Search for jobs with keywords and location filters | Working |
+| `get_job_details` | Get detailed information about a specific job posting | Working |
+| `save_job` ✍️ | Save a LinkedIn job to the current account's queue | Working |
 | `get_saved_jobs` | List the current account's saved jobs with pagination metadata | Working |
-| `update_profile_headline` | Update the logged-in profile headline with preview support | Working |
-| `set_open_to_work` | Enable or disable Open To Work preferences with preview support | Working |
-| `add_profile_skills` | Add new skills to the logged-in profile with preview support | Working |
-| `set_featured_skills` | Best-effort featured-skill ordering flow | Experimental |
 | `get_job_recommendations` | Read LinkedIn's personalized job recommendations feed | Working |
+
+### Feed & Analytics
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `browse_feed` | Browse the logged-in feed and return actionable post cards with `url`/`post_urn` | Working |
 | `get_post_reactions` | List people who reacted to a LinkedIn post, including reaction type | Working |
 | `get_post_commenters` | List top-level commenters on a LinkedIn post with comment text | Working |
+| `get_my_post_analytics` | Recent own posts with reactions, comments, reposts, impressions | Working |
+| `get_profile_analytics` | Profile views, search appearances, post impressions | Working |
+
+### Content Publishing
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `create_post` ✍️ | Create a post with optional image and visibility control | Working |
+| `create_poll` ✍️ | Create a poll post with 2–4 options | Working |
+| `repost` ✍️ | Repost with optional commentary | Working |
+| `delete_post` ✍️ | Delete an own post by URL (destructive — double-gated) | Working |
+
+### Engagement
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `react_to_post` ✍️ | React (like, celebrate, support, insightful, love, funny) | Working |
+| `comment_on_post` ✍️ | Comment on a post | Working |
+| `reply_to_comment` ✍️ | Reply to an existing comment | Working |
+| `like_comment` ✍️ | Like a comment | Working |
+| `get_engagement_health` | Session challenge/cooldown state for engagement writes | Working |
+
+### Messaging & Network
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `get_conversations` | List recent message threads with `thread_url` | Working |
+| `read_conversation` | Read a thread by id, URL, or participant profile | Working |
+| `send_message` ✍️ | Send a direct message | Working |
+| `send_connection_request` ✍️ | Send a connection request with optional note | Working |
+| `get_pending_invitations` | List pending incoming invitations | Working |
+| `respond_to_invitation` ✍️ | Accept or ignore an invitation | Working |
+| `follow_person` ✍️ | Follow a member | Working |
+
+### Own Profile
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `update_profile_headline` ✍️ | Update the logged-in profile headline with preview support | Working |
+| `set_open_to_work` ✍️ | Enable or disable Open To Work preferences with preview support | Working |
+| `add_profile_skills` ✍️ | Add new skills to the logged-in profile with preview support | Working |
+| `set_featured_skills` ✍️ | Best-effort featured-skill ordering flow | Experimental |
+
+### Session
+
+| Tool | Description | Status |
+|------|-------------|--------|
 | `close_session` | Close browser session and clean up resources | Working |
+
+### Write-Tool Safety Model
+
+Every write tool goes through a shared safety pipeline:
+
+- **Confirmation:** writes fail with `confirmation_required` unless called with `confirm=true` or allowlisted in `~/.linkedin-mcp/config.json` (`auto_approve_write_tools`).
+- **Previews:** `dry_run=true` returns what *would* happen without touching LinkedIn.
+- **Quotas:** daily caps per tool (e.g. 10 posts, 25 messages, 20 connection requests) plus per-session caps for profile edits; overridable via `quotas` in the config file.
+- **Challenge cooldowns:** after a CAPTCHA/checkpoint, engagement writes pause with escalating cooldowns (5 min → 30 min → 1 h) and are disabled temporarily after repeated challenges.
+- **Audit log:** every write attempt appends to `~/.linkedin-mcp/audit.log` with a parameter *hash* (never content).
 
 > [!IMPORTANT]
 > **Breaking change:** LinkedIn recently made some changes to prevent scraping. The newest version uses [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python) with persistent browser profiles instead of Playwright with session files. Old `session.json` files and `LINKEDIN_COOKIE` env vars are no longer supported. Run `--login` again to create a new profile + cookie file that can be mounted in docker. 02/2026
