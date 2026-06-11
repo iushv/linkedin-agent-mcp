@@ -15,13 +15,13 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from linkedin_mcp_server.core import handle_modal_close
-from linkedin_mcp_server.drivers.browser import (
-    ensure_authenticated,
-    get_or_create_browser,
-)
-from linkedin_mcp_server.error_handler import handle_tool_error
+from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.scraping import LinkedInExtractor, parse_company_sections
-from linkedin_mcp_server.tools._common import goto_and_check, parse_count
+from linkedin_mcp_server.tools._common import (
+    goto_and_check,
+    parse_count,
+    run_legacy_read_tool,
+)
 from linkedin_mcp_server.tools.feed import _extract_post_identifier
 
 logger = logging.getLogger(__name__)
@@ -144,9 +144,7 @@ def register_company_tools(mcp: FastMCP) -> None:
             Dict with url, sections (name -> raw text), pages_visited, and sections_requested.
             The LLM should parse the raw text in each section.
         """
-        try:
-            await ensure_authenticated()
-
+        async def _fetch() -> dict[str, Any]:
             fields, unknown = parse_company_sections(sections)
 
             logger.info(
@@ -187,8 +185,7 @@ def register_company_tools(mcp: FastMCP) -> None:
 
             return result
 
-        except Exception as e:
-            return handle_tool_error(e, "get_company_profile")
+        return await run_legacy_read_tool("get_company_profile", _fetch)
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -214,9 +211,7 @@ def register_company_tools(mcp: FastMCP) -> None:
         Returns:
             Dict with url, posts (structured list), pages_visited, and sections_requested.
         """
-        try:
-            await ensure_authenticated()
-
+        async def _fetch() -> dict[str, Any]:
             logger.info("Scraping company posts: %s", company_name)
 
             browser = await get_or_create_browser()
@@ -337,5 +332,4 @@ def register_company_tools(mcp: FastMCP) -> None:
                 "sections_requested": ["posts"],
             }
 
-        except Exception as e:
-            return handle_tool_error(e, "get_company_posts")
+        return await run_legacy_read_tool("get_company_posts", _fetch)

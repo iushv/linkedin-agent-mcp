@@ -15,17 +15,12 @@ from mcp.types import ToolAnnotations
 
 from linkedin_mcp_server.config import get_config
 from linkedin_mcp_server.core import JobCard, is_valid_job_card
-from linkedin_mcp_server.core.safety import (
-    acquire_browser_lock,
-    release_browser_lock,
-)
-from linkedin_mcp_server.drivers.browser import (
-    ensure_authenticated,
-    get_or_create_browser,
-)
-from linkedin_mcp_server.error_handler import handle_tool_error
+from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.scraping import LinkedInExtractor
-from linkedin_mcp_server.tools._common import goto_and_check
+from linkedin_mcp_server.tools._common import (
+    goto_and_check,
+    run_legacy_read_tool,
+)
 
 logger = logging.getLogger(__name__)
 _JOB_NAVIGATION_TIMEOUT_MS = 30_000
@@ -461,18 +456,8 @@ async def _run_job_read(
     action: str,
     fetch_fn: Callable[[], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Run a legacy job read tool with shared browser locking."""
-    browser_lock_acquired = False
-    try:
-        await acquire_browser_lock(action)
-        browser_lock_acquired = True
-        await ensure_authenticated()
-        return await fetch_fn()
-    except Exception as exc:
-        return handle_tool_error(exc, action)
-    finally:
-        if browser_lock_acquired:
-            release_browser_lock()
+    """Run a legacy job read tool through the standard envelope pipeline."""
+    return await run_legacy_read_tool(action, fetch_fn)
 
 
 def _job_navigation_timeout_ms() -> int:

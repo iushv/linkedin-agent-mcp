@@ -10,12 +10,20 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import unquote, urljoin, urlparse
 
 from linkedin_mcp_server.core.exceptions import (
+    AuthenticationError,
     ConcurrencyError,
     ElementNotFoundError,
     InteractionError,
+    NetworkError,
+    ProfileNotFoundError,
     QuotaExceededError,
     RateLimitError,
+    ScrapingError,
     SelectorError,
+)
+from linkedin_mcp_server.exceptions import (
+    CredentialsNotFoundError,
+    SessionExpiredError,
 )
 from linkedin_mcp_server.core.responses import (
     read_error,
@@ -214,9 +222,61 @@ def error_code_from_exception(exc: Exception) -> str:
         return "selector_error"
     if isinstance(exc, InteractionError):
         return "interaction_error"
+    if isinstance(exc, ProfileNotFoundError):
+        return "profile_not_found"
+    if isinstance(exc, AuthenticationError):
+        return "authentication_failed"
+    if isinstance(exc, SessionExpiredError):
+        return "session_expired"
+    if isinstance(exc, CredentialsNotFoundError):
+        return "authentication_not_found"
+    if isinstance(exc, NetworkError):
+        return "network_error"
+    if isinstance(exc, ScrapingError):
+        return "scraping_error"
     if isinstance(exc, ValueError):
         return "validation_error"
     return "unknown_error"
+
+
+_LEGACY_RESOLUTIONS: dict[str, str] = {
+    "authentication_not_found": "Run with --login to create a browser profile.",
+    "session_expired": "Run with --login to create a new browser profile.",
+    "authentication_failed": "Run with --login to re-authenticate.",
+    "rate_limit": "LinkedIn rate limit detected. Wait before trying again.",
+    "profile_not_found": "Check the profile URL is correct and the profile exists.",
+    "element_not_found": "LinkedIn page structure may have changed. Please report this issue.",
+    "selector_error": "LinkedIn UI may have changed. Check selector telemetry and update locator chains.",
+    "interaction_error": "Retry with visible browser mode to inspect UI state.",
+    "network_error": "Check your network connection and try again.",
+    "scraping_error": "Failed to extract data from LinkedIn. The page structure may have changed.",
+}
+
+
+async def run_legacy_read_tool(
+    action: str,
+    fetch_fn: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Run a read tool with the standard envelope plus legacy top-level keys.
+
+    Pre-envelope tools (person/company/job) returned their payload at the top
+    level on success and ``{error, message, resolution}`` on failure. This
+    wrapper produces the standard ``run_read_tool`` envelope and mirrors those
+    legacy keys additively so existing clients keep working for one release.
+    """
+    result = await run_read_tool(action, fetch_fn)
+
+    if result.get("status") == "success":
+        for key, value in (result.get("data") or {}).items():
+            result.setdefault(key, value)
+    else:
+        error_code = str(result.get("error_code") or "unknown_error")
+        result.setdefault("error", error_code)
+        resolution = _LEGACY_RESOLUTIONS.get(error_code)
+        if resolution:
+            result.setdefault("resolution", resolution)
+
+    return result
 
 
 def _log_tool_completion(

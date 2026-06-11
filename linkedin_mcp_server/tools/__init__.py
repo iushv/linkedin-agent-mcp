@@ -18,7 +18,7 @@ Available Tools:
 
 Architecture:
 - FastMCP integration for MCP-compliant tool registration
-- Shared error handling through centralized error_handler module
+- Shared error handling through run_read_tool / run_write_tool envelopes in _common
 - Singleton driver pattern for session persistence
 - Structured data return format for consistent MCP responses
 """

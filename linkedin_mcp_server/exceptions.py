@@ -1,4 +1,3 @@
-# src/linkedin_mcp_server/exceptions.py
 """
 Custom exceptions for LinkedIn MCP Server with specific error categorization.
 
@@ -6,9 +5,15 @@ Defines hierarchical exception types for different error scenarios including
 authentication failures and MCP client reporting.
 """
 
+from linkedin_mcp_server.core.exceptions import LinkedInScraperException
 
-class LinkedInMCPError(Exception):
-    """Base exception for LinkedIn MCP Server."""
+
+class LinkedInMCPError(LinkedInScraperException):
+    """Base exception for LinkedIn MCP Server app-level errors.
+
+    Subclasses LinkedInScraperException so the whole project shares one
+    exception hierarchy and one error-code mapping.
+    """
 
     pass
 
