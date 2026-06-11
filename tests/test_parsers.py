@@ -7,18 +7,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # ── feed.py parsers ──
-from linkedin_mcp_server.tools.feed import (
+from linkedin_mcp_server.tools.extraction.activity_text import (
     _build_activity_post_analytics_item,
     _build_post_analytics_item,
     _extract_metric,
-    _extract_post_identifier,
     _extract_post_from_text,
-    _extract_post_url,
     _extract_time_ago,
-    _is_engagement_actionable_identifier,
     _looks_like_analytics_card_text,
-    _normalize_post_url,
     _parse_posts_from_activity_text,
+)
+from linkedin_mcp_server.tools.extraction.post_identity import (
+    _extract_post_identifier,
+    _extract_post_url,
+    _is_engagement_actionable_identifier,
+    _normalize_post_url,
 )
 
 # ── job.py parsers ──

@@ -56,6 +56,7 @@ def register_person_tools(mcp: FastMCP) -> None:
             Sections may be absent if extraction yielded no content for that page.
             The LLM should parse the raw text in each section.
         """
+
         async def _fetch() -> dict[str, Any]:
             fields, unknown = parse_person_sections(sections)
             profile_slug = extract_profile_slug(linkedin_username)

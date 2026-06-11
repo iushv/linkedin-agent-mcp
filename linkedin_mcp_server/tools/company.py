@@ -22,7 +22,7 @@ from linkedin_mcp_server.tools._common import (
     parse_count,
     run_legacy_read_tool,
 )
-from linkedin_mcp_server.tools.feed import _extract_post_identifier
+from linkedin_mcp_server.tools.extraction.post_identity import _extract_post_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +144,7 @@ def register_company_tools(mcp: FastMCP) -> None:
             Dict with url, sections (name -> raw text), pages_visited, and sections_requested.
             The LLM should parse the raw text in each section.
         """
+
         async def _fetch() -> dict[str, Any]:
             fields, unknown = parse_company_sections(sections)
 
@@ -211,6 +212,7 @@ def register_company_tools(mcp: FastMCP) -> None:
         Returns:
             Dict with url, posts (structured list), pages_visited, and sections_requested.
         """
+
         async def _fetch() -> dict[str, Any]:
             logger.info("Scraping company posts: %s", company_name)
 

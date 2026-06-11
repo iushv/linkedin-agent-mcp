@@ -364,7 +364,9 @@ class TestPostAnalyticsTools:
         assert result["data"]["results"][0]["comment_text"] == "Great post"
 
     async def test_get_post_commenters_load_more_capped(self, monkeypatch):
-        from linkedin_mcp_server.tools.feed import _load_comment_rows
+        from linkedin_mcp_server.tools.extraction.engagement_rows import (
+            _load_comment_rows,
+        )
 
         row_locator = FakeLocator([])
         container = FakeNode(
@@ -385,7 +387,7 @@ class TestPostAnalyticsTools:
             return None
 
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_optional_locator",
+            "linkedin_mcp_server.tools.extraction.engagement_rows._resolve_optional_locator",
             _resolve_optional_locator,
         )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
@@ -441,11 +443,11 @@ class TestPostAnalyticsTools:
             return None
 
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_optional_locator",
+            "linkedin_mcp_server.tools.extraction.engagement_rows._resolve_optional_locator",
             _resolve_optional_locator,
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._extract_post_author_profile_url",
+            "linkedin_mcp_server.tools.extraction.engagement_rows._extract_post_author_profile_url",
             AsyncMock(return_value="https://www.linkedin.com/in/op-author/"),
         )
 
@@ -462,7 +464,9 @@ class TestPostAnalyticsTools:
         )
 
     async def test_get_post_commenters_uses_comment_specific_selectors(self):
-        from linkedin_mcp_server.tools.feed import _extract_comment_row
+        from linkedin_mcp_server.tools.extraction.engagement_rows import (
+            _extract_comment_row,
+        )
 
         row = _comment_row(
             name="Ava Singh",
@@ -479,7 +483,9 @@ class TestPostAnalyticsTools:
         assert result["time_ago"] == "2h"
 
     async def test_get_post_commenters_skips_op_author(self):
-        from linkedin_mcp_server.tools.feed import _extract_comment_row
+        from linkedin_mcp_server.tools.extraction.engagement_rows import (
+            _extract_comment_row,
+        )
 
         row = _comment_row(
             name="Ayush Kumar",
@@ -499,7 +505,9 @@ class TestPostAnalyticsTools:
 
 class TestPostAnalyticsHelpers:
     def test_clean_member_name_strips_accessibility_noise(self):
-        from linkedin_mcp_server.tools.feed import _clean_member_name
+        from linkedin_mcp_server.tools.extraction.activity_text import (
+            _clean_member_name,
+        )
 
         assert (
             _clean_member_name(
@@ -516,7 +524,9 @@ class TestPostAnalyticsHelpers:
 
     @pytest.mark.asyncio
     async def test_load_reaction_modal_uses_modal_scoped_rows(self, monkeypatch):
-        from linkedin_mcp_server.tools.feed import _load_reaction_modal
+        from linkedin_mcp_server.tools.extraction.engagement_rows import (
+            _load_reaction_modal,
+        )
 
         row_locator = FakeLocator([FakeNode(text="row 1"), FakeNode(text="row 2")])
         modal = FakeNode(

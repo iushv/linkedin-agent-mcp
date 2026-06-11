@@ -97,9 +97,24 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.ensure_page_healthy", AsyncMock()
         )
         monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.ensure_page_healthy",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.handle_modal_close", AsyncMock()
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.handle_modal_close",
+            AsyncMock(),
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.effective_navigation_timeout_ms",
             lambda minimum_ms: minimum_ms,
@@ -107,6 +122,11 @@ class TestBrowseFeed:
         self.mock_goto_and_check = AsyncMock()
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.goto_and_check", self.mock_goto_and_check
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            self.mock_goto_and_check,
+            raising=False,
         )
 
     async def test_browse_feed_success(self, monkeypatch):
@@ -125,6 +145,11 @@ class TestBrowseFeed:
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
         )
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed._extract_post_identifier",
@@ -169,7 +194,17 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -191,7 +226,17 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -214,7 +259,17 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -251,9 +306,24 @@ class TestMyPostAnalytics:
             "linkedin_mcp_server.tools.feed.goto_and_check", AsyncMock()
         )
         monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.handle_modal_close", AsyncMock()
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.handle_modal_close",
+            AsyncMock(),
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
     async def test_analytics_dom_success(self, monkeypatch):
         card_texts = [
@@ -273,11 +343,11 @@ class TestMyPostAnalytics:
         loc.count = AsyncMock(return_value=1)
         loc.nth = lambda idx: _make_nth(card_texts, idx)
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=loc),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._extract_post_identifier",
+            "linkedin_mcp_server.tools.extraction.feed_cards._extract_post_identifier",
             AsyncMock(
                 return_value={
                     "url": "https://www.linkedin.com/feed/update/urn:li:activity:123/",
@@ -351,10 +421,15 @@ class TestMyPostAnalytics:
             MagicMock(return_value=MagicMock(extract_page=extract_page)),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=0))),
         )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -396,10 +471,15 @@ class TestMyPostAnalytics:
             MagicMock(return_value=MagicMock(extract_page=AsyncMock(return_value=""))),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=0))),
         )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -444,6 +524,11 @@ class TestMyPostAnalytics:
 
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.goto_and_check", _failing_goto
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            _failing_goto,
+            raising=False,
         )
         # Text fallback returns nothing — exercises the all-fail-then-empty-fallback path.
         monkeypatch.setattr(
