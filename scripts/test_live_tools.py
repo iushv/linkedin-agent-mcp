@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +112,11 @@ def parse_args() -> argparse.Namespace:
         "--company-name",
         default="anthropicresearch",
         help="Company slug for company tools.",
+    )
+    parser.add_argument(
+        "--filter-company",
+        default="Uber",
+        help="Company used to verify search_people applies its current_company filter.",
     )
     parser.add_argument(
         "--job-id",
@@ -294,6 +300,79 @@ def classify_result(result: Any, expect: str) -> tuple[str, str]:
     return "PASS", short_detail(payload)
 
 
+def content_violations(case: "ToolCase", result: Any) -> list[str]:
+    """Assert returned data actually matches what was asked for.
+
+    A tool can return status=success while handing back another company's
+    posts or ignoring a filter. Status-only checks cannot see that, so these
+    assertions look at the payload itself. Returns human-readable violations;
+    empty list means the content is consistent with the request.
+    """
+    data = unwrap_data(result)
+    if not isinstance(data, dict):
+        return []
+
+    violations: list[str] = []
+
+    def _texts(items: Any, *keys: str) -> list[str]:
+        out: list[str] = []
+        if not isinstance(items, list):
+            return out
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in keys:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    out.append(value.lower())
+        return out
+
+    def _slug_tokens(value: str) -> set[str]:
+        return {tok for tok in re.split(r"[^a-z0-9]+", value.lower()) if len(tok) > 2}
+
+    if case.name == "get_company_posts":
+        requested = str(case.args.get("company_name", ""))
+        posts = data.get("posts")
+        tokens = _slug_tokens(requested)
+        if isinstance(posts, list) and posts and tokens:
+            haystack = " ".join(
+                _texts(posts, "author", "company", "text", "text_preview")
+                + [str(data.get("url", "")).lower(), str(data.get("resolved_name", "")).lower()]
+            )
+            if not any(tok in haystack for tok in tokens):
+                violations.append(
+                    f"slug mismatch: asked for '{requested}' but no post/author/url mentions it "
+                    "(possible cross-company session leak)"
+                )
+        if isinstance(posts, list) and posts:
+            missing_urls = sum(1 for p in posts if isinstance(p, dict) and not p.get("url"))
+            if missing_urls == len(posts):
+                violations.append(f"all {len(posts)} posts have url=null")
+
+    if case.name == "search_people":
+        company = case.args.get("current_company")
+        results = data.get("results")
+        if company and isinstance(results, list) and results:
+            tokens = _slug_tokens(str(company))
+            haystack_per = [
+                " ".join(
+                    v
+                    for k, v in item.items()
+                    if isinstance(v, str) and k in {"headline", "company", "current_company", "subtitle"}
+                ).lower()
+                for item in results
+                if isinstance(item, dict)
+            ]
+            matches = sum(1 for h in haystack_per if any(tok in h for tok in tokens))
+            if haystack_per and matches == 0:
+                violations.append(
+                    f"filter ignored: current_company='{company}' but 0/{len(haystack_per)} "
+                    "results mention it"
+                )
+
+    return violations
+
+
 def unwrap_data(result: Any) -> dict[str, Any]:
     payload = normalize_result(result)
     if isinstance(payload, dict) and payload.get("status") == "success":
@@ -377,6 +456,11 @@ async def invoke_case(
             )
 
         status, detail = classify_result(result, case.expect)
+        if status == "PASS":
+            violations = content_violations(case, result)
+            if violations:
+                status = "FAIL"
+                detail = f"{detail} | CONTENT: " + "; ".join(violations)
         return (
             ToolOutcome(
                 case.name,
@@ -437,6 +521,19 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
                 "keywords": args.job_keywords,
                 "location": args.job_location,
                 "match_mode": "broad",
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        # Separate case with an explicit company filter: content_violations()
+        # asserts the filter is actually applied, which the broad case above
+        # cannot check.
+        ToolCase(
+            "search_people",
+            {
+                "keywords": args.job_keywords,
+                "current_company": args.filter_company,
+                "match_mode": "strict",
                 "limit": args.list_limit,
             },
             "read",

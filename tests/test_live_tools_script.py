@@ -68,6 +68,7 @@ def make_args(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "url": "http://127.0.0.1:8080/mcp",
         "person_username": "ayushkumar-exl",
         "company_name": "anthropicresearch",
+        "filter_company": "Uber",
         "job_id": "4252026496",
         "job_keywords": "python developer",
         "job_location": "Remote",
