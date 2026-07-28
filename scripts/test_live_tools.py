@@ -119,6 +119,12 @@ def parse_args() -> argparse.Namespace:
         help="Company used to verify search_people applies its current_company filter.",
     )
     parser.add_argument(
+        "--filter-keywords",
+        default="engineer",
+        help="Broad keyword for the search_people filter check (narrow terms return "
+        "zero rows, which cannot verify the filter).",
+    )
+    parser.add_argument(
         "--job-id",
         default="4252026496",
         help="LinkedIn job id for get_job_details.",
@@ -334,41 +340,75 @@ def content_violations(case: "ToolCase", result: Any) -> list[str]:
         requested = str(case.args.get("company_name", ""))
         posts = data.get("posts")
         tokens = _slug_tokens(requested)
-        if isinstance(posts, list) and posts and tokens:
+        if not isinstance(posts, list) or not posts:
+            # An empty result for a major company is a silent extraction
+            # failure, not a pass. Never let emptiness skip the checks below.
+            violations.append(
+                f"no posts returned for '{requested}' (empty result is not a pass)"
+            )
+        else:
             haystack = " ".join(
                 _texts(posts, "author", "company", "text", "text_preview")
-                + [str(data.get("url", "")).lower(), str(data.get("resolved_name", "")).lower()]
+                + [
+                    str(data.get("url", "")).lower(),
+                    str(data.get("resolved_name", "")).lower(),
+                ]
             )
-            if not any(tok in haystack for tok in tokens):
+            if tokens and not any(tok in haystack for tok in tokens):
                 violations.append(
                     f"slug mismatch: asked for '{requested}' but no post/author/url mentions it "
                     "(possible cross-company session leak)"
                 )
-        if isinstance(posts, list) and posts:
-            missing_urls = sum(1 for p in posts if isinstance(p, dict) and not p.get("url"))
+            missing_urls = sum(
+                1 for p in posts if isinstance(p, dict) and not p.get("url")
+            )
             if missing_urls == len(posts):
                 violations.append(f"all {len(posts)} posts have url=null")
+            missing_authors = sum(
+                1 for p in posts if isinstance(p, dict) and not p.get("author")
+            )
+            if missing_authors == len(posts):
+                violations.append(f"all {len(posts)} posts have author=null")
 
     if case.name == "search_people":
         company = case.args.get("current_company")
         results = data.get("results")
-        if company and isinstance(results, list) and results:
-            tokens = _slug_tokens(str(company))
-            haystack_per = [
-                " ".join(
-                    v
-                    for k, v in item.items()
-                    if isinstance(v, str) and k in {"headline", "company", "current_company", "subtitle"}
-                ).lower()
-                for item in results
-                if isinstance(item, dict)
-            ]
-            matches = sum(1 for h in haystack_per if any(tok in h for tok in tokens))
-            if haystack_per and matches == 0:
+        if company:
+            if not isinstance(results, list) or not results:
                 violations.append(
-                    f"filter ignored: current_company='{company}' but 0/{len(haystack_per)} "
-                    "results mention it"
+                    f"no results for current_company='{company}' — cannot verify the "
+                    "filter is applied (empty result is not a pass)"
                 )
+            else:
+                tokens = _slug_tokens(str(company))
+                per_person = [
+                    " ".join(
+                        v
+                        for k, v in item.items()
+                        if isinstance(v, str)
+                        and k in {"headline", "company", "current_company", "subtitle"}
+                    )
+                    .strip()
+                    .lower()
+                    for item in results
+                    if isinstance(item, dict)
+                ]
+                verifiable = [h for h in per_person if h]
+                if not verifiable:
+                    # Distinct from "filter ignored": the fields that would
+                    # prove affiliation came back blank, so nobody — canary or
+                    # human — can tell whether these people work there.
+                    violations.append(
+                        f"unverifiable: {len(per_person)} results returned for "
+                        f"current_company='{company}' but all headline/company fields are empty"
+                    )
+                elif tokens and not any(
+                    any(tok in h for tok in tokens) for h in verifiable
+                ):
+                    violations.append(
+                        f"filter ignored: current_company='{company}' but 0/{len(verifiable)} "
+                        "results with a readable headline mention it"
+                    )
 
     return violations
 
@@ -527,11 +567,13 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
         ),
         # Separate case with an explicit company filter: content_violations()
         # asserts the filter is actually applied, which the broad case above
-        # cannot check.
+        # cannot check. Deliberately uses a broad keyword — a narrow one
+        # returns zero rows, and an empty result set proves nothing about
+        # whether the filter works.
         ToolCase(
             "search_people",
             {
-                "keywords": args.job_keywords,
+                "keywords": args.filter_keywords,
                 "current_company": args.filter_company,
                 "match_mode": "strict",
                 "limit": args.list_limit,

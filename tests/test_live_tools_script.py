@@ -49,6 +49,33 @@ class FakeClient:
             return {"status": "dry_run", "message": f"{name} dry run"}
         if name in live_tools.SESSION_TOOL_NAMES:
             return {"status": "success", "message": "session closed"}
+        # Tools with content assertions need a payload that actually satisfies
+        # them; an empty dict is a vacuous result and is now a real failure.
+        if name == "get_company_posts":
+            slug = str(args.get("company_name", ""))
+            return {
+                "status": "success",
+                "data": {
+                    "url": f"https://www.linkedin.com/company/{slug}/posts/",
+                    "posts": [
+                        {
+                            "author": slug,
+                            "url": "https://www.linkedin.com/feed/update/urn:li:activity:1",
+                            "text": f"{slug} post",
+                        }
+                    ],
+                },
+            }
+        if name == "search_people" and args.get("current_company"):
+            company = str(args["current_company"])
+            return {
+                "status": "success",
+                "data": {
+                    "results": [
+                        {"name": "Sample", "headline": f"Engineer at {company}"}
+                    ]
+                },
+            }
         return {"status": "success", "data": {}}
 
 
@@ -69,6 +96,7 @@ def make_args(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "person_username": "ayushkumar-exl",
         "company_name": "anthropicresearch",
         "filter_company": "Uber",
+        "filter_keywords": "engineer",
         "job_id": "4252026496",
         "job_keywords": "python developer",
         "job_location": "Remote",
@@ -247,3 +275,117 @@ def test_write_json_report_serializes_outcomes(tmp_path):
     assert payload["failures"] == 1
     assert payload["read_outcomes"][0]["attempts"] == 2
     assert payload["read_outcomes"][0]["name"] == "get_conversations"
+
+
+# ---------------------------------------------------------------------------
+# content_violations — the canary's own assertions must not pass vacuously
+# ---------------------------------------------------------------------------
+
+
+def _case(name: str, **args: Any) -> live_tools.ToolCase:
+    return live_tools.ToolCase(name, args, "read")
+
+
+def _ok(data: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "success", "data": data}
+
+
+class TestContentViolationsCompanyPosts:
+    def test_clean_payload_has_no_violations(self):
+        result = _ok(
+            {
+                "url": "https://www.linkedin.com/company/llamaindex/posts/",
+                "posts": [
+                    {"author": "LlamaIndex", "url": "https://x/1", "text": "hi"},
+                ],
+            }
+        )
+        assert (
+            live_tools.content_violations(
+                _case("get_company_posts", company_name="llamaindex"), result
+            )
+            == []
+        )
+
+    def test_empty_posts_is_a_violation_not_a_skip(self):
+        violations = live_tools.content_violations(
+            _case("get_company_posts", company_name="llamaindex"), _ok({"posts": []})
+        )
+        assert any("empty result is not a pass" in v for v in violations)
+
+    def test_detects_cross_company_leak(self):
+        result = _ok(
+            {
+                "url": "https://www.linkedin.com/company/weaviate/posts/",
+                "posts": [
+                    {"author": "Weaviate", "url": "https://x/1", "text": "vectors"}
+                ],
+            }
+        )
+        violations = live_tools.content_violations(
+            _case("get_company_posts", company_name="llamaindex"), result
+        )
+        assert any("slug mismatch" in v for v in violations)
+
+    def test_detects_all_null_urls(self):
+        result = _ok(
+            {
+                "url": "https://www.linkedin.com/company/llamaindex/posts/",
+                "posts": [{"author": "LlamaIndex", "url": None, "text": "hi"}],
+            }
+        )
+        violations = live_tools.content_violations(
+            _case("get_company_posts", company_name="llamaindex"), result
+        )
+        assert any("url=null" in v for v in violations)
+
+    def test_detects_all_null_authors(self):
+        result = _ok(
+            {
+                "url": "https://www.linkedin.com/company/llamaindex/posts/",
+                "posts": [{"author": None, "url": "https://x/1", "text": "LlamaIndex"}],
+            }
+        )
+        violations = live_tools.content_violations(
+            _case("get_company_posts", company_name="llamaindex"), result
+        )
+        assert any("author=null" in v for v in violations)
+
+
+class TestContentViolationsSearchPeople:
+    def test_matching_headline_passes(self):
+        result = _ok({"results": [{"name": "A", "headline": "Engineer at Uber"}]})
+        assert (
+            live_tools.content_violations(
+                _case("search_people", current_company="Uber"), result
+            )
+            == []
+        )
+
+    def test_empty_results_is_a_violation_not_a_skip(self):
+        violations = live_tools.content_violations(
+            _case("search_people", current_company="Uber"), _ok({"results": []})
+        )
+        assert any("empty result is not a pass" in v for v in violations)
+
+    def test_blank_headlines_reported_as_unverifiable(self):
+        result = _ok({"results": [{"name": "A", "headline": ""}, {"name": "B"}]})
+        violations = live_tools.content_violations(
+            _case("search_people", current_company="Uber"), result
+        )
+        assert any("unverifiable" in v for v in violations)
+
+    def test_wrong_company_reported_as_filter_ignored(self):
+        result = _ok({"results": [{"name": "A", "headline": "Engineer at Google"}]})
+        violations = live_tools.content_violations(
+            _case("search_people", current_company="Uber"), result
+        )
+        assert any("filter ignored" in v for v in violations)
+
+    def test_no_filter_requested_means_no_assertions(self):
+        assert (
+            live_tools.content_violations(
+                _case("search_people", keywords="python"), _ok({"results": []})
+            )
+            == []
+        )
