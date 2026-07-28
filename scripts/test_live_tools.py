@@ -306,6 +306,27 @@ def classify_result(result: Any, expect: str) -> tuple[str, str]:
     return "PASS", short_detail(payload)
 
 
+# Tools whose primary collection must never come back empty, and the reason.
+# An assertion that passes on zero rows is worse than no assertion, because it
+# reports confidence -- so emptiness here is a failure, not a skip.
+_MUST_NOT_BE_EMPTY: dict[str, tuple[str, str]] = {
+    "browse_feed": ("posts", "the logged-in feed always has content"),
+    "get_person_profile": ("sections", "a profile page always has sections"),
+    # get_company_posts is checked in detail below (slug, urls, authors).
+}
+
+# Deliberately exempt: these can be legitimately empty, so asserting non-empty
+# would produce false alarms. Documented so the exemption reads as a decision
+# rather than an oversight.
+_MAY_BE_EMPTY: dict[str, str] = {
+    "get_pending_invitations": "you may genuinely have no pending invitations",
+    "get_conversations": "the inbox may genuinely be empty",
+    "get_my_post_analytics": "there may be no recent posts in the window",
+    "get_engagement_health": "returns scalar health fields, not a collection",
+    "send_connection_request": "dry_run returns a preview, not data",
+}
+
+
 def content_violations(case: "ToolCase", result: Any) -> list[str]:
     """Assert returned data actually matches what was asked for.
 
@@ -335,6 +356,13 @@ def content_violations(case: "ToolCase", result: Any) -> list[str]:
 
     def _slug_tokens(value: str) -> set[str]:
         return {tok for tok in re.split(r"[^a-z0-9]+", value.lower()) if len(tok) > 2}
+
+    expectation = _MUST_NOT_BE_EMPTY.get(case.name)
+    if expectation:
+        key, reason = expectation
+        value = data.get(key)
+        if not value:
+            violations.append(f"empty '{key}' — {reason} (empty result is not a pass)")
 
     if case.name == "get_company_posts":
         requested = str(case.args.get("company_name", ""))

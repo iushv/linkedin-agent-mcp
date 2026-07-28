@@ -76,6 +76,12 @@ class FakeClient:
                     ]
                 },
             }
+        if name in live_tools._MUST_NOT_BE_EMPTY:
+            key, _ = live_tools._MUST_NOT_BE_EMPTY[name]
+            filler: Any = (
+                {"main_profile": "sample text"} if key == "sections" else [{"id": 1}]
+            )
+            return {"status": "success", "data": {key: filler}}
         return {"status": "success", "data": {}}
 
 
@@ -388,4 +394,57 @@ class TestContentViolationsSearchPeople:
                 _case("search_people", keywords="python"), _ok({"results": []})
             )
             == []
+        )
+
+
+class TestContentViolationsEmptinessGeneralized:
+    """Every asserted tool must fail on an empty primary collection, and the
+    exemptions must be deliberate rather than accidental."""
+
+    def test_browse_feed_empty_posts_fails(self):
+        violations = live_tools.content_violations(
+            _case("browse_feed"), _ok({"posts": []})
+        )
+        assert any("empty 'posts'" in v for v in violations)
+
+    def test_browse_feed_with_posts_passes(self):
+        violations = live_tools.content_violations(
+            _case("browse_feed"), _ok({"posts": [{"author": "A"}]})
+        )
+        assert violations == []
+
+    def test_person_profile_empty_sections_fails(self):
+        violations = live_tools.content_violations(
+            _case("get_person_profile"), _ok({"sections": {}})
+        )
+        assert any("empty 'sections'" in v for v in violations)
+
+    def test_person_profile_with_sections_passes(self):
+        violations = live_tools.content_violations(
+            _case("get_person_profile"), _ok({"sections": {"main_profile": "text"}})
+        )
+        assert violations == []
+
+    def test_exempt_tools_tolerate_emptiness(self):
+        for name in ("get_pending_invitations", "get_conversations"):
+            assert live_tools.content_violations(_case(name), _ok({})) == []
+
+    def test_every_canary_tool_is_classified(self):
+        """Guards against a new tool silently getting no coverage decision."""
+        import re as _re
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parents[1] / "scripts" / "run_canary.sh"
+        canary_tools = set(_re.findall(r"--tool\s+(\w+)", script.read_text()))
+        asserted = {"get_company_posts", "search_people"}
+        classified = (
+            set(live_tools._MUST_NOT_BE_EMPTY)
+            | set(live_tools._MAY_BE_EMPTY)
+            | asserted
+        )
+
+        unclassified = canary_tools - classified
+        assert not unclassified, (
+            f"canary runs {sorted(unclassified)} with no emptiness decision — "
+            "add to _MUST_NOT_BE_EMPTY or _MAY_BE_EMPTY"
         )
