@@ -225,3 +225,41 @@ class TestProfileLockHolder:
         (tmp_path / "SingletonLock").symlink_to("no-pid-here")
 
         assert profile_lock_holder(tmp_path) is None
+
+
+class TestDoctorIsSideEffectFree:
+    """A diagnostic must report state, never change it.
+
+    The session check launches a browser, which calls ensure_browser_binary()
+    and downloads ~520MB. If that runs while the binaries are already known
+    missing, the doctor silently repairs the exact fault it is describing --
+    which also makes it useless for verifying that the fault is detected.
+    """
+
+    def test_session_check_skipped_when_binaries_missing(self, monkeypatch, capsys):
+        import linkedin_mcp_server.cli_main as cli_main
+        from linkedin_mcp_server.config.schema import AppConfig
+
+        config = AppConfig()
+        monkeypatch.setattr(cli_main, "get_config", lambda: config)
+        monkeypatch.setattr(cli_main, "configure_logging", lambda **_k: None)
+        monkeypatch.setattr(cli_main, "get_version", lambda: "4.1.0")
+        monkeypatch.setattr(
+            cli_main,
+            "_diagnose_browser_binaries",
+            lambda headless: (False, ["  ❌ chromium: MISSING"]),
+        )
+        monkeypatch.setattr(cli_main, "profile_exists", lambda _d=None: True)
+        monkeypatch.setattr(cli_main, "profile_lock_holder", lambda _d=None: None)
+
+        def _explode() -> None:
+            raise AssertionError("doctor must not launch a browser / install")
+
+        monkeypatch.setattr(cli_main, "get_or_create_browser", _explode)
+
+        with pytest.raises(SystemExit) as exc:
+            cli_main.doctor_and_exit()
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "skipped — browser binaries missing" in out

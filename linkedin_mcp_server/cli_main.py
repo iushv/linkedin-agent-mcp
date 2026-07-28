@@ -237,6 +237,7 @@ def doctor_and_exit() -> None:
     print(f"  executable: {sys.executable}")
 
     print("\nBrowser binaries")
+    binaries_ok = True
     if config.browser.chrome_path:
         print(f"  using custom chrome_path: {config.browser.chrome_path}")
     else:
@@ -264,7 +265,13 @@ def doctor_and_exit() -> None:
             )
 
     print("\nSession")
-    if not profile_exists(profile_dir):
+    if not binaries_ok:
+        # Launching a browser here would call ensure_browser_binary(), which
+        # downloads ~520MB. A diagnostic must report state, never change it —
+        # and a doctor that silently repairs the fault it is describing cannot
+        # be used to verify that the fault is detected.
+        print("  ⏭  skipped — browser binaries missing (would trigger a download)")
+    elif not profile_exists(profile_dir):
         print("  ⏭  skipped (no profile)")
     else:
 
