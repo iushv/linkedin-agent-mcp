@@ -924,3 +924,39 @@ class TestCompanyPostAuthor:
         parsed = _parse_company_post_text(text)
 
         assert parsed["author"] is None
+
+
+class TestLandedUrlMatchesSlug:
+    """Guards against silently returning another company's posts."""
+
+    def test_exact_match(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug(
+            "https://www.linkedin.com/company/llamaindex/posts/", "llamaindex"
+        )
+
+    def test_punctuation_variant_is_not_a_mismatch(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug(
+            "https://www.linkedin.com/company/llama-index/posts/", "llamaindex"
+        )
+
+    def test_different_company_is_a_mismatch(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert not _landed_url_matches_slug(
+            "https://www.linkedin.com/company/weaviate/posts/", "llamaindex"
+        )
+
+    def test_non_company_url_does_not_cry_wolf(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug("https://www.linkedin.com/feed/", "llamaindex")
+
+    def test_empty_inputs_are_tolerated(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug("", "llamaindex")
+        assert _landed_url_matches_slug("https://x/company/a/", "")

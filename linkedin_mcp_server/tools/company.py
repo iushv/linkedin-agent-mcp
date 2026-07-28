@@ -53,9 +53,32 @@ async def _resolve_company_name(page: Any) -> str | None:
 async def _resolve_company_url(page: Any) -> str | None:
     """Get the final URL after any LinkedIn redirects."""
     try:
-        return page.url
+        url = page.url
     except Exception:
         return None
+    return url if isinstance(url, str) else None
+
+
+def _landed_url_matches_slug(landed_url: str, requested_slug: str) -> bool:
+    """Check the browser actually ended up on the requested company page.
+
+    LinkedIn redirects ambiguous slugs to whichever company it resolves, which
+    is how a request for one company can return another company's posts.
+    Comparison is case-insensitive and ignores punctuation so that cosmetic
+    slug variants (``llama-index`` vs ``llamaindex``) are not flagged.
+    """
+    if not landed_url or not requested_slug:
+        return True
+
+    def _norm(value: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", value.lower())
+
+    match = re.search(r"/company/([^/?#]+)", landed_url)
+    if not match:
+        # Not a company URL at all — cannot confirm, so do not cry wolf.
+        return True
+
+    return _norm(match.group(1)) == _norm(requested_slug)
 
 
 _FOLLOWERS_RE = re.compile(r"^[\d,.kKmM]+\s+followers?$", re.IGNORECASE)
@@ -358,12 +381,34 @@ def register_company_tools(mcp: FastMCP) -> None:
                 if raw_text:
                     sections["posts"] = raw_text
 
-            return {
+            result: dict[str, Any] = {
                 "url": url,
                 "posts": posts[:safe_limit],
                 "sections": sections,
                 "pages_visited": [url],
                 "sections_requested": ["posts"],
             }
+
+            # LinkedIn silently redirects ambiguous or renamed slugs, so the
+            # page we extracted from is not necessarily the one requested.
+            # Returning another company's posts as if they were the requested
+            # company's is worse than returning nothing, so make any divergence
+            # visible to the caller instead of leaving it silent.
+            landed_url = await _resolve_company_url(page)
+            if landed_url:
+                result["landed_url"] = landed_url
+                if not _landed_url_matches_slug(landed_url, company_name):
+                    result["warning"] = (
+                        f"Requested company '{company_name}' but the browser landed on "
+                        f"{landed_url}. These posts may belong to a different company — "
+                        "verify before using them."
+                    )
+                    logger.warning(
+                        "Company slug mismatch: requested=%s landed=%s",
+                        company_name,
+                        landed_url,
+                    )
+
+            return result
 
         return await run_legacy_read_tool("get_company_posts", _fetch)
