@@ -860,3 +860,67 @@ class TestExtractNameHeadline:
         name, headline = _extract_name_headline("")
         assert name == ""
         assert headline == ""
+
+
+# ---------------------------------------------------------------------------
+# company._parse_company_post_text — author recovery
+# ---------------------------------------------------------------------------
+
+
+class TestCompanyPostAuthor:
+    """The 2025 company feed puts the author between the card header and the
+    follower count; reshares put a different name there than the page owner."""
+
+    def test_extracts_author_above_follower_count(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 1\n"
+            "LlamaIndex\n"
+            "287,388 followers\n"
+            "Contact us\n"
+            "4d •\n"
+            "Your agents deserve better retrieval\n"
+            "42 reactions\n"
+            "7 comments"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "LlamaIndex"
+        assert parsed["reactions"] == 42
+        assert parsed["comments"] == 7
+
+    def test_falls_back_to_line_after_header(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 3\n"
+            "Weaviate\n"
+            "Some post body that is long enough to be a real post body here\n"
+            "1d •"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "Weaviate"
+
+    def test_reshare_author_differs_from_page_owner(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 2\n"
+            "Jerry Liu\n"
+            "12,004 followers\n"
+            "2d •\n"
+            "Reshared thoughts on retrieval pipelines and evaluation"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "Jerry Liu"
+
+    def test_missing_author_returns_none_not_header(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = "Some stray card text with no recognisable author structure at all"
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] is None

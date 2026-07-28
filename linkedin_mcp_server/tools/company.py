@@ -58,6 +58,37 @@ async def _resolve_company_url(page: Any) -> str | None:
         return None
 
 
+_FOLLOWERS_RE = re.compile(r"^[\d,.kKmM]+\s+followers?$", re.IGNORECASE)
+_FEED_POST_HEADER_RE = re.compile(r"^feed post number\s+\d+$", re.IGNORECASE)
+
+
+def _extract_company_post_author(lines: list[str]) -> str | None:
+    """Recover the posting entity from a company-feed card's innerText.
+
+    LinkedIn's 2025 company feed renders each card as:
+        Feed post number N
+        <Author>
+        <N> followers
+        ...
+    Reshares put a different name here than the page owner, so this is also
+    what lets callers notice a post that did not come from the requested
+    company.
+    """
+    # Preferred anchor: the author sits directly above the follower count.
+    for idx, line in enumerate(lines):
+        if _FOLLOWERS_RE.match(line) and idx > 0:
+            candidate = lines[idx - 1]
+            if candidate and not _FEED_POST_HEADER_RE.match(candidate):
+                return candidate
+
+    # Fallback: the line right after the "Feed post number N" header.
+    for idx, line in enumerate(lines):
+        if _FEED_POST_HEADER_RE.match(line) and idx + 1 < len(lines):
+            return lines[idx + 1]
+
+    return None
+
+
 def _parse_company_post_text(text: str) -> dict[str, Any]:
     """Parse a single company post's innerText into structured fields."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -98,6 +129,7 @@ def _parse_company_post_text(text: str) -> dict[str, Any]:
             reposts = val
 
     return {
+        "author": _extract_company_post_author(lines),
         "text_preview": text_preview,
         "time_ago": time_ago,
         "reactions": reactions,
