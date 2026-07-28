@@ -190,3 +190,38 @@ async def test_get_or_create_browser_rechecks_when_headless_requirement_changes(
     assert doctor.call_count == 2
     assert doctor.call_args_list[0].kwargs == {"headless": False}
     assert doctor.call_args_list[1].kwargs == {"headless": True}
+
+
+class TestProfileLockHolder:
+    """Distinguishes a live competing instance from a stale post-crash lock."""
+
+    def test_no_lock_returns_none(self, tmp_path):
+        from linkedin_mcp_server.drivers.browser import profile_lock_holder
+
+        assert profile_lock_holder(tmp_path) is None
+
+    def test_live_pid_is_reported(self, tmp_path):
+        import os
+
+        from linkedin_mcp_server.drivers.browser import profile_lock_holder
+
+        # Our own PID is guaranteed to be alive.
+        (tmp_path / "SingletonLock").symlink_to(f"hostname-{os.getpid()}")
+
+        assert profile_lock_holder(tmp_path) == os.getpid()
+
+    def test_stale_pid_is_ignored(self, tmp_path):
+        from linkedin_mcp_server.drivers.browser import profile_lock_holder
+
+        # PID 0x7FFFFFFF will not exist; a crashed run must not look like a
+        # second live instance or every crash becomes a false conflict.
+        (tmp_path / "SingletonLock").symlink_to("hostname-2147483647")
+
+        assert profile_lock_holder(tmp_path) is None
+
+    def test_malformed_target_returns_none(self, tmp_path):
+        from linkedin_mcp_server.drivers.browser import profile_lock_holder
+
+        (tmp_path / "SingletonLock").symlink_to("no-pid-here")
+
+        assert profile_lock_holder(tmp_path) is None

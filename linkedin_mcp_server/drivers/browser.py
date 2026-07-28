@@ -8,6 +8,7 @@ automatic profile persistence.
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -394,6 +395,41 @@ def get_profile_dir() -> Path:
     """Get the resolved profile directory from config."""
     config = get_config()
     return Path(config.browser.user_data_dir).expanduser()
+
+
+def profile_lock_holder(profile_dir: Path | None = None) -> int | None:
+    """Return the PID of a live process holding the browser profile, if any.
+
+    Chromium writes a ``SingletonLock`` symlink pointing at ``<host>-<pid>``.
+    A stale lock left by a crash points at a PID that no longer exists, so the
+    PID is probed before reporting a conflict — otherwise every crash would
+    look like a second running instance.
+    """
+    if profile_dir is None:
+        profile_dir = get_profile_dir()
+
+    lock = profile_dir / "SingletonLock"
+    try:
+        if not lock.is_symlink() and not lock.exists():
+            return None
+        target = os.readlink(lock) if lock.is_symlink() else ""
+    except OSError:
+        return None
+
+    match = re.search(r"-(\d+)$", target)
+    if not match:
+        return None
+
+    pid = int(match.group(1))
+    try:
+        os.kill(pid, 0)  # signal 0 only checks for existence
+    except ProcessLookupError:
+        return None  # stale lock from a crashed run
+    except PermissionError:
+        return pid  # exists, owned by another user
+    except OSError:
+        return None
+    return pid
 
 
 def profile_exists(profile_dir: Path | None = None) -> bool:

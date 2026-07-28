@@ -269,6 +269,13 @@ def load_from_args(config: AppConfig) -> AppConfig:
     )
 
     parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Print environment diagnostics (versions, browser binaries, "
+        "profile lock, session) and exit",
+    )
+
+    parser.add_argument(
         "--logout",
         action="store_true",
         help="Clear stored LinkedIn browser profile",
@@ -358,6 +365,9 @@ def load_from_args(config: AppConfig) -> AppConfig:
 
     if args.status:
         config.server.status = True
+
+    if args.doctor:
+        config.server.doctor = True
 
     if args.logout:
         config.server.logout = True

@@ -74,6 +74,7 @@ class ServerConfig:
     login: bool = False
     status: bool = False  # Check session validity and exit
     logout: bool = False
+    doctor: bool = False  # Print environment diagnostics and exit
     # HTTP transport configuration
     host: str = "127.0.0.1"
     port: int = 8000
