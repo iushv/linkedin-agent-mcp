@@ -184,17 +184,28 @@ def _extract_company_display_name(raw_text: str | None, slug: str) -> str:
 
 
 def _company_candidate_matches(name: str, slug: str, display_name: str) -> bool:
+    """Whether a search hit *is* the requested company. Exact names only.
+
+    Fuzzy matching accepted any candidate merely containing the query: "uber"
+    matched "ubercreativedigitalagency", a UK creative agency with 5,978
+    followers, whose ID was then reported as a successfully applied filter.
+    Token-level matching does not help either — "Uber" is a genuine token of
+    "Uber Creative Digital Agency", structurally identical to "Deloitte" in
+    "Deloitte India".
+
+    Since no heuristic separates those two cases, this refuses to guess. A
+    near-miss now resolves to nothing, and the caller's existing warn-and-drop
+    path runs the search unfiltered with an explicit warning. Losing the filter
+    loudly is recoverable; silently targeting the wrong company is not.
+    """
     requested = _normalize_key(name)
-    slug_text = _normalize_key(slug.replace("-", " "))
-    display_text = _normalize_key(display_name)
     if not requested:
         return False
-    return (
-        requested in slug_text
-        or requested in display_text
-        or slug_text in requested
-        or display_text in requested
-    )
+
+    slug_text = _normalize_key(slug.replace("-", " "))
+    display_text = _normalize_key(display_name)
+
+    return requested in {slug_text, display_text}
 
 
 def _extract_current_company_ids(value: str | None) -> list[str]:
@@ -357,11 +368,21 @@ async def _live_resolve_company(name: str) -> ResolvedCompany | None:
             company_url=company_url.rstrip("/"),
             display_name=display_name,
         )
+        # Only an exact-name candidate is returned. There is deliberately no
+        # "closest hit" fallback: returning a plausible-looking wrong company
+        # is reported to the caller as a successful filter, which is
+        # unfalsifiable from the response. Returning nothing triggers
+        # warn-and-drop instead, which is visible.
         if _normalize_key(display_name) == normalized_name:
             return company
-        if best_match is None:
-            best_match = company
 
+    if candidates:
+        logger.info(
+            "Company resolution for %r found %d candidate(s) but none matched "
+            "exactly; running unfiltered rather than guessing.",
+            name,
+            len(candidates),
+        )
     return best_match
 
 
