@@ -10,6 +10,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+from pathlib import Path
 from typing import Literal
 
 import inquirer
@@ -167,6 +168,30 @@ def profile_info_and_exit() -> None:
         sys.exit(1)
 
 
+def build_fingerprint() -> str:
+    """Content hash of the installed package source.
+
+    A version number cannot distinguish two builds of the same version, which
+    is exactly the case that bites after `uv tool install` no-ops on a
+    same-version rebuild: the code changed, `4.1.0` did not, and the stale
+    deploy looks identical to the fixed one. This hash changes whenever any
+    module does, so "am I looking at the deployed fix?" is one line of output
+    rather than a fresh investigation.
+    """
+    import hashlib
+    from pathlib import Path as _Path
+
+    package_dir = _Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(package_dir.rglob("*.py")):
+            digest.update(path.relative_to(package_dir).as_posix().encode())
+            digest.update(path.read_bytes())
+    except OSError:
+        return "unknown"
+    return digest.hexdigest()[:12]
+
+
 def _diagnose_browser_binaries(headless: bool) -> tuple[bool, list[str]]:
     """Report expected vs on-disk Patchright browser binaries."""
     from linkedin_mcp_server.drivers.browser import (
@@ -235,6 +260,8 @@ def doctor_and_exit() -> None:
         print("  patchright: ❌ not installed")
     print(f"  python:     {sys.version.split()[0]}")
     print(f"  executable: {sys.executable}")
+    print(f"  build:      {build_fingerprint()}  (source hash — changes when code does)")
+    print(f"  package at: {Path(__file__).resolve().parent}")
 
     print("\nBrowser binaries")
     binaries_ok = True

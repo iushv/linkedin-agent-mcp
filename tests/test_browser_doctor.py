@@ -263,3 +263,40 @@ class TestDoctorIsSideEffectFree:
         assert exc.value.code == 1
         out = capsys.readouterr().out
         assert "skipped — browser binaries missing" in out
+
+
+class TestBuildFingerprint:
+    """A version number cannot distinguish two builds of the same version."""
+
+    def test_is_stable_across_calls(self):
+        from linkedin_mcp_server.cli_main import build_fingerprint
+
+        assert build_fingerprint() == build_fingerprint()
+
+    def test_looks_like_a_short_hash(self):
+        from linkedin_mcp_server.cli_main import build_fingerprint
+
+        fp = build_fingerprint()
+        assert len(fp) == 12
+        assert all(c in "0123456789abcdef" for c in fp)
+
+    def test_changes_when_source_changes(self, tmp_path, monkeypatch):
+        """The whole point: same version, different code => different hash."""
+        import hashlib
+
+        def fingerprint_of(root):
+            digest = hashlib.sha256()
+            for path in sorted(root.rglob("*.py")):
+                digest.update(path.relative_to(root).as_posix().encode())
+                digest.update(path.read_bytes())
+            return digest.hexdigest()[:12]
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "mod.py").write_text("x = 1\n")
+        before = fingerprint_of(pkg)
+
+        (pkg / "mod.py").write_text("x = 2\n")
+        after = fingerprint_of(pkg)
+
+        assert before != after
