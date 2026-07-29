@@ -409,12 +409,16 @@ def content_violations(case: "ToolCase", result: Any) -> list[str]:
                 )
             else:
                 tokens = _slug_tokens(str(company))
+                # Deliberately excludes current_company: that field used to
+                # echo the requested filter back, so accepting it as evidence
+                # made this assertion circular — it matched the query even when
+                # every result worked somewhere else. Only fields parsed from
+                # the card itself can adjudicate the filter.
                 per_person = [
                     " ".join(
                         v
                         for k, v in item.items()
-                        if isinstance(v, str)
-                        and k in {"headline", "company", "current_company", "subtitle"}
+                        if isinstance(v, str) and k in {"headline", "subtitle"}
                     )
                     .strip()
                     .lower()

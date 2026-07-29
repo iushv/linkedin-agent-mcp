@@ -263,11 +263,22 @@ def _parse_person_card_text(
         if location is None and _looks_like_location(line):
             location = line
 
-    current_company = (
-        explicit_current_company
-        or _extract_current_company(headline)
-        or default_current_company
-    )
+    # Only report an employer the card actually evidences. Falling back to the
+    # requested filter unconditionally echoed the query back as if it were
+    # parsed data: a search for "Uber Technologies" returned
+    # current_company="Uber Technologies" for someone whose headline read
+    # "Software Engineer @ Apple" -- and did so even when the filter had been
+    # dropped entirely. That made the field useless for verification, because
+    # checking it against the query was circular by construction.
+    # past_companies below has always required this evidence; current_company
+    # now matches it.
+    current_company = explicit_current_company or _extract_current_company(headline)
+    if (
+        current_company is None
+        and default_current_company
+        and default_current_company.lower() in text.lower()
+    ):
+        current_company = default_current_company
     past_companies = explicit_past_companies or None
     if (
         default_past_company

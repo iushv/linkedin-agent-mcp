@@ -183,3 +183,50 @@ class TestPersonCard2025Layout:
         assert card.location == "Singapore"
         assert card.connection_degree == "2nd"
         assert card.shared_connections == 3
+
+
+class TestCurrentCompanyIsNotAnEcho:
+    """current_company must report evidence, never repeat the query.
+
+    It previously fell back to the requested filter unconditionally, so a
+    search for "Uber Technologies" labelled an Apple engineer as working at
+    Uber -- even on runs where the filter had been dropped. Any verification
+    against that field was circular.
+    """
+
+    def test_does_not_echo_query_when_card_lacks_evidence(self):
+        card = _parse_person_card_text(
+            "\n".join(
+                [
+                    "Himanshi Agrawal",
+                    "Software Engineer @ Apple",
+                    "Bengaluru, India",
+                ]
+            ),
+            profile_url="https://www.linkedin.com/in/himanshi-agrawal/",
+            default_current_company="Uber Technologies",
+        )
+
+        assert card is not None
+        assert card.current_company != "Uber Technologies"
+
+    def test_uses_query_when_card_actually_evidences_it(self):
+        card = _parse_person_card_text(
+            "\n".join(["Real Uberite", "• 2nd", "Staff Engineer, Uber", "Amsterdam"]),
+            profile_url="https://www.linkedin.com/in/real-uberite/",
+            default_current_company="Uber",
+        )
+
+        assert card is not None
+        assert card.current_company is not None
+        assert "uber" in card.current_company.lower()
+
+    def test_prefers_employer_parsed_from_headline(self):
+        card = _parse_person_card_text(
+            "\n".join(["Someone", "ML Engineer at Apple", "Dublin, Ireland"]),
+            profile_url="https://www.linkedin.com/in/someone/",
+            default_current_company="Uber",
+        )
+
+        assert card is not None
+        assert card.current_company == "Apple"

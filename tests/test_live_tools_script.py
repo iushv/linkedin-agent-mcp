@@ -448,3 +448,26 @@ class TestContentViolationsEmptinessGeneralized:
             f"canary runs {sorted(unclassified)} with no emptiness decision — "
             "add to _MUST_NOT_BE_EMPTY or _MAY_BE_EMPTY"
         )
+
+
+def test_search_people_assertion_ignores_echoed_current_company():
+    """The canary must not accept current_company as proof of affiliation.
+
+    While that field echoed the query it matched every time, which is why the
+    canary passed a search that returned employees of a different company.
+    """
+    result = _ok(
+        {
+            "results": [
+                {
+                    "name": "A",
+                    "headline": "AI Engineer @ Google",
+                    "current_company": "Uber",
+                },
+            ]
+        }
+    )
+    violations = live_tools.content_violations(
+        _case("search_people", current_company="Uber"), result
+    )
+    assert any("filter ignored" in v for v in violations)
