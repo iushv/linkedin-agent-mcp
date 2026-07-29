@@ -109,3 +109,77 @@ class TestParseHelpers:
             past_company="Mastercard",
             location="Singapore",
         )
+
+
+class TestPersonCard2025Layout:
+    """LinkedIn's 2025 people card puts the degree directly under the name.
+
+    That previously left headline null and stored the headline text as the
+    location, which made every result's employer unverifiable.
+    """
+
+    def test_degree_line_after_name_still_yields_headline(self):
+        card = _parse_person_card_text(
+            "\n".join(
+                [
+                    "Abhilash Adavi",
+                    "• 2nd",
+                    "AI Engineer @ Google",
+                    "Bengaluru, Karnataka, India",
+                ]
+            ),
+            profile_url="https://www.linkedin.com/in/abhilash-adavi/",
+        )
+
+        assert card is not None
+        assert card.headline == "AI Engineer @ Google"
+        assert card.location == "Bengaluru, Karnataka, India"
+        assert card.connection_degree == "2nd"
+
+    def test_headline_with_comma_is_not_mistaken_for_location(self):
+        card = _parse_person_card_text(
+            "\n".join(
+                [
+                    "Rishu Roy",
+                    "• 3rd+",
+                    "AI @ Google, ex-Amazon",
+                    "Hyderabad, India",
+                ]
+            ),
+            profile_url="https://www.linkedin.com/in/rishu-roy/",
+        )
+
+        assert card is not None
+        assert card.headline == "AI @ Google, ex-Amazon"
+        assert card.location == "Hyderabad, India"
+
+    def test_location_only_card_does_not_become_a_headline(self):
+        card = _parse_person_card_text(
+            "\n".join(["Someone Anon", "• 2nd", "Bengaluru, India"]),
+            profile_url="https://www.linkedin.com/in/someone-anon/",
+        )
+
+        assert card is not None
+        assert card.headline is None
+        assert card.location == "Bengaluru, India"
+
+    def test_legacy_layout_still_parses(self):
+        """The pre-2025 order must keep working."""
+        card = _parse_person_card_text(
+            "\n".join(
+                [
+                    "Priya Sharma",
+                    "Senior ML Engineer at Mastercard",
+                    "Singapore",
+                    "2nd degree connection",
+                    "3 shared connections",
+                ]
+            ),
+            profile_url="https://www.linkedin.com/in/priya-sharma/",
+        )
+
+        assert card is not None
+        assert card.headline == "Senior ML Engineer at Mastercard"
+        assert card.location == "Singapore"
+        assert card.connection_degree == "2nd"
+        assert card.shared_connections == 3
