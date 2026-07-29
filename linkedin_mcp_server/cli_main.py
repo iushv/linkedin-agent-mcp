@@ -260,7 +260,9 @@ def doctor_and_exit() -> None:
         print("  patchright: ❌ not installed")
     print(f"  python:     {sys.version.split()[0]}")
     print(f"  executable: {sys.executable}")
-    print(f"  build:      {build_fingerprint()}  (source hash — changes when code does)")
+    print(
+        f"  build:      {build_fingerprint()}  (source hash — changes when code does)"
+    )
     print(f"  package at: {Path(__file__).resolve().parent}")
 
     print("\nBrowser binaries")
