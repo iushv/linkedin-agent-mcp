@@ -852,14 +852,16 @@ class TestExtractNameHeadline:
         assert headline == "Software Engineer at Acme"
 
     def test_one_line(self):
+        # None rather than "": absent is distinguishable from empty, matching
+        # the rule applied elsewhere that a field reports evidence or nothing.
         name, headline = _extract_name_headline("Bob\n")
         assert name == "Bob"
-        assert headline == ""
+        assert headline is None
 
     def test_empty(self):
         name, headline = _extract_name_headline("")
         assert name == ""
-        assert headline == ""
+        assert headline is None
 
 
 # ---------------------------------------------------------------------------
@@ -960,3 +962,99 @@ class TestLandedUrlMatchesSlug:
 
         assert _landed_url_matches_slug("", "llamaindex")
         assert _landed_url_matches_slug("https://x/company/a/", "")
+
+
+# ---------------------------------------------------------------------------
+# network.py — invitation card parsing
+# ---------------------------------------------------------------------------
+
+
+class TestMutualConnections:
+    """Fixtures are real strings scraped from the invitation manager.
+
+    The previous pattern required a digit immediately before "mutual" and
+    matched none of these, which is why every invitation returned null.
+    """
+
+    @pytest.mark.parametrize(
+        "card_text,expected",
+        [
+            ("Rohit Sharma is a mutual connection", 1),
+            ("Beemireddy Chinna Obula Reddy is a mutual connection", 1),
+            ("Harsh Vij and 2 other mutual connections", 3),
+            ("ZMI and 5 other mutual connections", 6),
+            ("Prikshit Singh and 6 other mutual connections", 7),
+            ("vivek gupta and 41 other mutual connections", 42),
+        ],
+    )
+    def test_real_linkedin_phrasings(self, card_text, expected):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections(card_text) == expected
+
+    def test_bare_count_still_supported(self):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections("3 mutual connections") == 3
+
+    def test_no_mutual_text_returns_none(self):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections("Jayam Gupta\nAgent harnesses") is None
+
+    def test_old_pattern_would_have_missed_these(self):
+        """Pins the regression: the previous regex matched zero real cards."""
+        import re
+
+        old = re.compile(r"([\d,.kKmM]+)\s+mutual", re.IGNORECASE)
+        for text in (
+            "Rohit Sharma is a mutual connection",
+            "Harsh Vij and 2 other mutual connections",
+            "vivek gupta and 41 other mutual connections",
+        ):
+            assert old.search(text) is None
+
+
+class TestInvitationNameHeadline:
+    def test_duplicated_name_is_not_returned_as_headline(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(
+                [
+                    "Jayam Gupta",
+                    "Jayam Gupta",
+                    "Building agent harnesses at scale",
+                    "Harsh Vij and 2 other mutual connections",
+                    "Accept",
+                ]
+            )
+        )
+
+        assert name == "Jayam Gupta"
+        assert headline == "Building agent harnesses at scale"
+
+    def test_skips_degree_and_action_noise(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(["Devansh Singh", "• 2nd", "Ignore", "LangGraph + FAISS RAG"])
+        )
+
+        assert name == "Devansh Singh"
+        assert headline == "LangGraph + FAISS RAG"
+
+    def test_returns_none_when_nothing_descriptive(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(["Anon Person", "Anon Person", "Accept", "Ignore"])
+        )
+
+        assert name == "Anon Person"
+        assert headline is None
+
+    def test_empty_text(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        assert _extract_name_headline("") == ("", None)

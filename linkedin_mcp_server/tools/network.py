@@ -72,18 +72,92 @@ async def _click_with_overlay_protection(
             ) from inner
 
 
+# LinkedIn phrases mutual connections in three ways. The previous pattern,
+# ``([\d,.kKmM]+)\s+mutual``, required a digit immediately before "mutual" and
+# matched *none* of them -- which is why every invitation returned null rather
+# than only some. Note the singular "other" and the absence of "are".
+_MUTUAL_WITH_OTHERS_RE = re.compile(
+    r"\band\s+([\d,]+)\s+other\s+mutual\s+connections?\b", re.IGNORECASE
+)
+_MUTUAL_SINGLE_RE = re.compile(r"\bis\s+a\s+mutual\s+connection\b", re.IGNORECASE)
+_MUTUAL_BARE_RE = re.compile(r"\b([\d,]+)\s+mutual\s+connections?\b", re.IGNORECASE)
+
+# Lines that are never a headline: the degree badge, mutual-connection summary,
+# and the row's action buttons.
+_INVITE_NOISE_RE = re.compile(
+    r"^(accept|ignore|decline|message|withdraw|follow|[•·]?\s*(1st|2nd|3rd\+?))$",
+    re.IGNORECASE,
+)
+
+
 def _extract_mutual_connections(text: str) -> int | None:
-    match = re.search(r"([\d,.kKmM]+)\s+mutual", text, re.IGNORECASE)
-    if not match:
-        return None
-    return parse_count(match.group(1))
+    """Count mutual connections, including the person LinkedIn names.
+
+    "Harsh Vij and 2 other mutual connections" is three people: Harsh plus the
+    two others. Counting only the digit would under-report every card by one.
+    """
+    with_others = _MUTUAL_WITH_OTHERS_RE.search(text)
+    if with_others:
+        others = parse_count(with_others.group(1))
+        return None if others is None else others + 1
+
+    if _MUTUAL_SINGLE_RE.search(text):
+        return 1
+
+    bare = _MUTUAL_BARE_RE.search(text)
+    if bare:
+        return parse_count(bare.group(1))
+
+    return None
 
 
-def _extract_name_headline(text: str) -> tuple[str, str]:
+def _extract_name_headline(text: str) -> tuple[str, str | None]:
+    """Return the invitee's name and their actual headline.
+
+    The card repeats the name on the second line (avatar alt text), so taking
+    ``lines[1]`` positionally returned the name as the headline for every
+    invitation, making the field useless for triage. Skip anything that merely
+    repeats the name or is row furniture, and return None rather than a wrong
+    value when nothing descriptive remains.
+    """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    name = lines[0] if lines else ""
-    headline = lines[1] if len(lines) > 1 else ""
-    return name, headline
+    if not lines:
+        return "", None
+
+    name = lines[0]
+    normalized_name = name.casefold()
+
+    for line in lines[1:]:
+        if line.casefold() == normalized_name:
+            continue
+        if _INVITE_NOISE_RE.match(line):
+            continue
+        if _MUTUAL_WITH_OTHERS_RE.search(line) or _MUTUAL_SINGLE_RE.search(line):
+            continue
+        if _MUTUAL_BARE_RE.search(line):
+            continue
+        return name, line
+
+    return name, None
+
+
+async def _find_invite_dialog(page: Any) -> Any | None:
+    """Return the open invite dialog, or None if the page is not showing one.
+
+    Returning None keeps the caller working page-wide, which preserves the
+    previous behaviour on any layout that does not use a dialog. Scope narrows
+    resolution when a dialog exists; it never blocks the flow when one does not.
+    """
+    for selector in ("[role='dialog']", ".artdeco-modal"):
+        try:
+            candidate = page.locator(selector).first
+            if await candidate.count() > 0:
+                return candidate
+        except Exception:
+            continue
+
+    logger.debug("No invite dialog found; resolving against the full page")
+    return None
 
 
 async def _find_invite_button(row: Any, action: str) -> Any | None:
@@ -196,11 +270,26 @@ def register_network_tools(mcp: FastMCP) -> None:
                     ),
                 )
 
-            if note:
-                await click_element(page, SELECTORS["network"]["add_note"])
-                await type_text(page, SELECTORS["network"]["note_input"], note)
+            # Everything from here happens inside the invite dialog. Resolving
+            # against the whole page let a generic strategy match the global
+            # search box -- earlier in the DOM than the note field -- so the
+            # note was typed there and #interop-outlet intercepted the click.
+            invite_dialog = await _find_invite_dialog(page)
 
-            await click_element(page, SELECTORS["network"]["send_invite"])
+            if note:
+                await click_element(
+                    page, SELECTORS["network"]["add_note"], scope=invite_dialog
+                )
+                await type_text(
+                    page,
+                    SELECTORS["network"]["note_input"],
+                    note,
+                    scope=invite_dialog,
+                )
+
+            await click_element(
+                page, SELECTORS["network"]["send_invite"], scope=invite_dialog
+            )
             await detect_rate_limit_post_action(page)
 
             if ctx:
@@ -302,9 +391,15 @@ def register_network_tools(mcp: FastMCP) -> None:
             for idx in range(total_rows):
                 row = rows.nth(idx)
                 try:
+                    # Company/page invitations link to /company/, not /in/, so
+                    # requiring a person link silently dropped every one of them.
                     anchor = row.locator('a[href*="/in/"]').first
+                    invitation_type = "person"
                     if await anchor.count() == 0:
-                        continue
+                        anchor = row.locator('a[href*="/company/"]').first
+                        invitation_type = "page"
+                        if await anchor.count() == 0:
+                            continue
 
                     text = await row.inner_text(timeout=2000)
                     name, headline = _extract_name_headline(text)
@@ -318,6 +413,7 @@ def register_network_tools(mcp: FastMCP) -> None:
                             "profile_url": href,
                             "headline": headline,
                             "mutual_connections": _extract_mutual_connections(text),
+                            "invitation_type": invitation_type,
                             "invitation_index": idx,
                         }
                     )

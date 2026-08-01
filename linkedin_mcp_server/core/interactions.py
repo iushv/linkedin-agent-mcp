@@ -7,7 +7,7 @@ import random
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from patchright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from patchright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
 
 from .exceptions import InteractionError
 from .selectors import LocatorChain
@@ -51,11 +51,17 @@ async def click_element(
     page: Page,
     locator_chain: LocatorChain,
     timeout: int = 5000,
+    *,
+    scope: Locator | None = None,
 ) -> None:
-    """Resolve and click an element using a resilient locator chain."""
+    """Resolve and click an element using a resilient locator chain.
+
+    ``scope`` restricts resolution to a container (typically the active
+    dialog) so a generic strategy cannot match something elsewhere on the page.
+    """
 
     async def _click() -> None:
-        locator = await locator_chain.find(page, timeout=timeout)
+        locator = await locator_chain.find(page, timeout=timeout, scope=scope)
         await locator.click(timeout=timeout)
         await human_delay()
 
@@ -68,6 +74,8 @@ async def type_text(
     text: str,
     delay: int = 50,
     timeout: int = 5000,
+    *,
+    scope: Locator | None = None,
 ) -> None:
     """Resolve an input/editor, focus it, and insert text.
 
@@ -77,7 +85,7 @@ async def type_text(
     """
 
     async def _type() -> None:
-        locator = await locator_chain.find(page, timeout=timeout)
+        locator = await locator_chain.find(page, timeout=timeout, scope=scope)
         await locator.click(timeout=timeout)
         await human_delay(120, 400)
 

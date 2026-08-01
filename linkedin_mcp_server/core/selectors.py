@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from patchright.async_api import Locator, Page
 
 from .exceptions import SelectorError
+
+logger = logging.getLogger(__name__)
+
+# A locator root: either a whole page or a container to scope resolution within.
+# Playwright Locators expose the same get_by_role/get_by_text/get_by_label/locator
+# methods as Page, so strategies work against either unchanged.
+LocatorRoot = Page | Locator
 
 
 class LocatorStrategy(Protocol):
@@ -16,7 +24,7 @@ class LocatorStrategy(Protocol):
     def describe(self) -> str:
         """Return a human-readable strategy description."""
 
-    def locator(self, page: Page) -> Locator:
+    def locator(self, page: LocatorRoot) -> Locator:
         """Return a Patchright locator for this strategy."""
 
 
@@ -30,7 +38,7 @@ class AriaLabel:
     def describe(self) -> str:
         return f"aria-label:{self.label}"
 
-    def locator(self, page: Page) -> Locator:
+    def locator(self, page: LocatorRoot) -> Locator:
         return page.get_by_label(self.label, exact=self.exact)
 
 
@@ -47,7 +55,7 @@ class Role:
             return f"role:{self.role}:{self.name}"
         return f"role:{self.role}"
 
-    def locator(self, page: Page) -> Locator:
+    def locator(self, page: LocatorRoot) -> Locator:
         return page.get_by_role(
             cast(Any, self.role),
             name=self.name,
@@ -65,7 +73,7 @@ class Text:
     def describe(self) -> str:
         return f"text:{self.text}"
 
-    def locator(self, page: Page) -> Locator:
+    def locator(self, page: LocatorRoot) -> Locator:
         return page.get_by_text(self.text, exact=self.exact)
 
 
@@ -78,7 +86,7 @@ class CSS:
     def describe(self) -> str:
         return f"css:{self.selector}"
 
-    def locator(self, page: Page) -> Locator:
+    def locator(self, page: LocatorRoot) -> Locator:
         return page.locator(self.selector)
 
 
@@ -89,8 +97,21 @@ class LocatorChain:
     name: str
     strategies: list[LocatorStrategy]
 
-    async def resolve(self, page: Page, timeout: int = 5000) -> Locator:
-        """Return the first strategy locator that has at least one match."""
+    async def resolve(
+        self,
+        page: Page,
+        timeout: int = 5000,
+        *,
+        scope: Locator | None = None,
+    ) -> Locator:
+        """Return the first strategy locator that has at least one match.
+
+        ``page`` stays a real Page because the failure path needs ``page.url``
+        and ``collect_page_debug``. ``scope`` optionally restricts resolution
+        to a container (a dialog, a card), which is what stops a generic
+        strategy from matching an element elsewhere on the page.
+        """
+        root: LocatorRoot = scope if scope is not None else page
         attempted: list[str] = []
 
         for strategy in self.strategies:
@@ -98,7 +119,7 @@ class LocatorChain:
             attempted.append(strategy_desc)
 
             try:
-                locator = strategy.locator(page)
+                locator = strategy.locator(root)
                 if await locator.count() > 0:
                     return locator
             except Exception as exc:  # pragma: no cover - defensive fallback
@@ -112,9 +133,39 @@ class LocatorChain:
             context={"page_debug": await collect_page_debug(page, timeout)},
         )
 
-    async def find(self, page: Page, timeout: int = 5000) -> Locator:
-        """Return the first matched element from the chain."""
-        locator = await self.resolve(page, timeout=timeout)
+    async def find(
+        self,
+        page: Page,
+        timeout: int = 5000,
+        *,
+        scope: Locator | None = None,
+    ) -> Locator:
+        """Return the single matched element from the chain.
+
+        Warns when the winning strategy matched more than one element. A chain
+        resolves on ``count() > 0``, so a broad strategy placed before a narrow
+        one always wins and ``.first`` then silently picks whichever element
+        happens to come first in the document -- which is how the invite note
+        was typed into the global search box. Collapsing several matches to one
+        is exactly that failure, so it is worth saying out loud.
+        """
+        locator = await self.resolve(page, timeout=timeout, scope=scope)
+
+        try:
+            matched = await locator.count()
+        except Exception:  # pragma: no cover - counting must never break a click
+            matched = 1
+
+        if matched > 1:
+            logger.warning(
+                "Selector chain '%s' matched %d elements; using the first. "
+                "A broader strategy may be shadowing a more specific one%s.",
+                self.name,
+                matched,
+                "" if scope is not None else " (resolution was not scoped)",
+                extra={"chain_name": self.name, "match_count": matched},
+            )
+
         return locator.first
 
 
@@ -202,8 +253,8 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
         ),
         "duration_dropdown": chain(
             "poll_duration",
-            Role("combobox"),
             CSS("select[name='duration']"),
+            Role("combobox"),
         ),
     },
     "post_actions": {
@@ -322,8 +373,11 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
         ),
         "note_input": chain(
             "network_note_input",
-            Role("textbox"),
+            # Specific first: a bare Role("textbox") matches the global search
+            # box, which is earlier in the DOM, so the note was typed there.
             CSS("textarea#custom-message"),
+            CSS("textarea[name='message']"),
+            Role("textbox"),
         ),
         "send_invite": chain(
             "network_send_invite",
@@ -369,10 +423,10 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
         ),
         "modal": chain(
             "post_reactions_modal",
-            Role("dialog"),
             CSS("div[role='dialog']:has(h2:has-text('Reactions'))"),
             CSS(".reactions-modal"),
             CSS(".social-details-reactors-tab-container"),
+            Role("dialog"),
         ),
         "row": chain(
             "post_reactions_row",
@@ -459,8 +513,8 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
         ),
         "saved_job_link": chain(
             "jobs_saved_job_link",
-            Role("link"),
             CSS("a[href*='/jobs/view/']"),
+            Role("link"),
         ),
         "saved_job_status": chain(
             "jobs_saved_job_status",
@@ -544,9 +598,9 @@ SELECTORS: dict[str, dict[str, LocatorChain]] = {
         ),
         "skill_input": chain(
             "profile_skill_input",
-            Role("combobox"),
             CSS("input[placeholder*='skill' i]"),
             CSS("input[aria-autocomplete='list']"),
+            Role("combobox"),
         ),
         "featured_skills_button": chain(
             "profile_featured_skills_button",
