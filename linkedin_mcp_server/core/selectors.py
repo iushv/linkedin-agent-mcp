@@ -120,7 +120,26 @@ class LocatorChain:
 
             try:
                 locator = strategy.locator(root)
-                if await locator.count() > 0:
+                matched = await locator.count()
+                if matched > 0:
+                    # KNOWN GAP: callers that use resolve() directly are
+                    # collection chains (card lists), and they get no ambiguity
+                    # warning -- find()'s warning only covers singular lookups,
+                    # and their strategy order is deliberately left alone
+                    # because promoting a stale CSS class above Role("listitem")
+                    # would silently shrink the result set rather than fix
+                    # anything. So a first-match-wins mistake is still silent
+                    # here. This DEBUG line is the only trace: compare the
+                    # winning strategy and count against how many items the
+                    # caller actually parsed. A large gap (e.g. Role("article")
+                    # matching non-feed articles) means the broad strategy is
+                    # picking up elements the extractor cannot use.
+                    logger.debug(
+                        "Selector chain '%s' resolved via %s (%d match(es))",
+                        self.name,
+                        strategy_desc,
+                        matched,
+                    )
                     return locator
             except Exception as exc:  # pragma: no cover - defensive fallback
                 attempted.append(f"{strategy_desc}:error:{type(exc).__name__}")

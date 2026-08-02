@@ -165,6 +165,12 @@ def test_no_empty_strategy_lists():
             )
 
 
+# NOTE: assertions below use getattr(found, "name") rather than found.name.
+# find() is typed to return a Locator, which has no .name; these doubles
+# carry one to identify which element was selected. The getattr keeps `ty`
+# quiet, at the cost of the doubles no longer being checked against the
+# protocol they stand in for -- if LocatorStrategy.locator() changes
+# signature, they will not complain. Deliberate, not an oversight to "fix".
 class _FakeLocator:
     """Minimal locator: knows how many elements it represents and its id."""
 
