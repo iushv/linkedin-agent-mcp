@@ -21,21 +21,14 @@ def patch_tool_deps(monkeypatch):
     mock_browser = MagicMock()
     mock_browser.page = MagicMock()
 
+    monkeypatch.setattr(
+        "linkedin_mcp_server.tools._common.ensure_authenticated", AsyncMock()
+    )
     for module in ["person", "company", "job"]:
-        monkeypatch.setattr(
-            f"linkedin_mcp_server.tools.{module}.ensure_authenticated", AsyncMock()
-        )
         monkeypatch.setattr(
             f"linkedin_mcp_server.tools.{module}.get_or_create_browser",
             AsyncMock(return_value=mock_browser),
         )
-
-    monkeypatch.setattr(
-        "linkedin_mcp_server.tools.job.acquire_browser_lock", AsyncMock()
-    )
-    monkeypatch.setattr(
-        "linkedin_mcp_server.tools.job.release_browser_lock", lambda: None
-    )
 
     return mock_browser
 
@@ -154,7 +147,7 @@ class TestPersonTool:
         from linkedin_mcp_server.exceptions import SessionExpiredError
 
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.person.ensure_authenticated",
+            "linkedin_mcp_server.tools._common.ensure_authenticated",
             AsyncMock(side_effect=SessionExpiredError()),
         )
 
@@ -194,11 +187,44 @@ class TestCompanyTools:
         assert "about" in result["sections"]
 
     async def test_get_company_posts(self, mock_context, patch_tool_deps, monkeypatch):
-        mock_extractor = MagicMock()
-        mock_extractor.extract_page = AsyncMock(return_value="Post 1\nPost 2")
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.company.LinkedInExtractor",
-            lambda *a, **kw: mock_extractor,
+            "linkedin_mcp_server.tools.company.goto_and_check", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.handle_modal_close", AsyncMock()
+        )
+
+        # Set up mock page to return card locators
+        mock_browser = MagicMock()
+        page = MagicMock()
+        page.wait_for_selector = AsyncMock()
+        page.evaluate = AsyncMock()
+
+        # Create mock card with enough text (>50 chars)
+        card_text = "Company X shared a post about AI and machine learning with lots of detail here"
+        card_mock = MagicMock()
+        card_mock.inner_text = AsyncMock(return_value=card_text)
+        url_loc = MagicMock()
+        url_loc.count = AsyncMock(return_value=0)
+        card_mock.locator = MagicMock(return_value=url_loc)
+
+        cards_locator = MagicMock()
+        cards_locator.count = AsyncMock(return_value=1)
+        cards_locator.nth = MagicMock(return_value=card_mock)
+
+        # Route locator calls: match card selector, return cards locator
+        def locator_router(sel):
+            if "feed-shared-update" in sel or "occludable" in sel or "article" in sel:
+                return cards_locator
+            empty = MagicMock()
+            empty.count = AsyncMock(return_value=0)
+            return empty
+
+        page.locator = MagicMock(side_effect=locator_router)
+        mock_browser.page = page
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.get_or_create_browser",
+            AsyncMock(return_value=mock_browser),
         )
 
         from linkedin_mcp_server.tools.company import register_company_tools
@@ -208,8 +234,8 @@ class TestCompanyTools:
 
         tool_fn = await get_tool_fn(mcp, "get_company_posts")
         result = await tool_fn("testcorp", mock_context)
-        assert "posts" in result["sections"]
-        assert result["sections"]["posts"] == "Post 1\nPost 2"
+        assert "posts" in result
+        assert len(result["posts"]) == 1
         assert result["sections_requested"] == ["posts"]
 
 
@@ -402,7 +428,10 @@ class TestJobTools:
     ):
         mock_release = MagicMock()
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.job.release_browser_lock",
+            "linkedin_mcp_server.tools._common.acquire_browser_lock", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools._common.release_browser_lock",
             mock_release,
         )
         monkeypatch.setattr(
@@ -422,7 +451,7 @@ class TestJobTools:
 
     async def test_get_job_details_error(self, mock_context, monkeypatch):
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.job.ensure_authenticated", AsyncMock()
+            "linkedin_mcp_server.tools._common.ensure_authenticated", AsyncMock()
         )
         mock_browser = MagicMock()
         mock_browser.page = MagicMock()
@@ -451,11 +480,31 @@ class TestCompanyToolsExtended:
     async def test_get_company_posts_empty_text(
         self, mock_context, patch_tool_deps, monkeypatch
     ):
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.goto_and_check", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.handle_modal_close", AsyncMock()
+        )
         mock_extractor = MagicMock()
         mock_extractor.extract_page = AsyncMock(return_value="")
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.company.LinkedInExtractor",
             lambda *a, **kw: mock_extractor,
+        )
+
+        mock_browser = MagicMock()
+        page = MagicMock()
+        page.wait_for_selector = AsyncMock()
+        page.evaluate = AsyncMock()
+        # Return empty card count for all selectors
+        empty_loc = MagicMock()
+        empty_loc.count = AsyncMock(return_value=0)
+        page.locator = MagicMock(return_value=empty_loc)
+        mock_browser.page = page
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.get_or_create_browser",
+            AsyncMock(return_value=mock_browser),
         )
 
         from linkedin_mcp_server.tools.company import register_company_tools
@@ -465,11 +514,12 @@ class TestCompanyToolsExtended:
 
         tool_fn = await get_tool_fn(mcp, "get_company_posts")
         result = await tool_fn("testcorp", mock_context)
+        assert result["posts"] == []
         assert result["sections"] == {}
 
     async def test_get_company_profile_error(self, mock_context, monkeypatch):
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.company.ensure_authenticated", AsyncMock()
+            "linkedin_mcp_server.tools._common.ensure_authenticated", AsyncMock()
         )
         mock_browser = MagicMock()
         mock_browser.page = MagicMock()
@@ -497,19 +547,20 @@ class TestCompanyToolsExtended:
 
     async def test_get_company_posts_error(self, mock_context, monkeypatch):
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.company.ensure_authenticated", AsyncMock()
+            "linkedin_mcp_server.tools._common.ensure_authenticated", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.goto_and_check",
+            AsyncMock(side_effect=RuntimeError("posts failed")),
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.company.handle_modal_close", AsyncMock()
         )
         mock_browser = MagicMock()
         mock_browser.page = MagicMock()
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.company.get_or_create_browser",
             AsyncMock(return_value=mock_browser),
-        )
-        mock_ext = MagicMock()
-        mock_ext.extract_page = AsyncMock(side_effect=RuntimeError("posts failed"))
-        monkeypatch.setattr(
-            "linkedin_mcp_server.tools.company.LinkedInExtractor",
-            lambda *a, **kw: mock_ext,
         )
 
         from linkedin_mcp_server.tools.company import register_company_tools
@@ -520,3 +571,62 @@ class TestCompanyToolsExtended:
         tool_fn = await get_tool_fn(mcp, "get_company_posts")
         result = await tool_fn("testcorp", mock_context)
         assert "error" in result
+
+
+class TestLegacyEnvelopeCompat:
+    """Legacy tools now return the standard envelope plus legacy keys."""
+
+    async def test_success_has_envelope_and_legacy_top_level(
+        self, mock_context, patch_tool_deps, monkeypatch
+    ):
+        expected = {
+            "url": "https://www.linkedin.com/in/test-user/",
+            "sections": {"main_profile": "John Doe"},
+            "pages_visited": ["https://www.linkedin.com/in/test-user/"],
+            "sections_requested": ["main_profile"],
+        }
+        mock_extractor = _make_mock_extractor(expected)
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.person.LinkedInExtractor",
+            lambda *a, **kw: mock_extractor,
+        )
+
+        from linkedin_mcp_server.tools.person import register_person_tools
+
+        mcp = FastMCP("test")
+        register_person_tools(mcp)
+
+        tool_fn = await get_tool_fn(mcp, "get_person_profile")
+        result = await tool_fn("test-user", mock_context)
+
+        # Standard envelope
+        assert result["status"] == "success"
+        assert result["action"] == "get_person_profile"
+        assert result["data"]["url"] == expected["url"]
+        # Legacy top-level passthrough
+        assert result["url"] == expected["url"]
+        assert result["sections"] == expected["sections"]
+
+    async def test_error_has_envelope_and_legacy_keys(self, mock_context, monkeypatch):
+        from linkedin_mcp_server.exceptions import SessionExpiredError
+
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools._common.ensure_authenticated",
+            AsyncMock(side_effect=SessionExpiredError()),
+        )
+
+        from linkedin_mcp_server.tools.person import register_person_tools
+
+        mcp = FastMCP("test")
+        register_person_tools(mcp)
+
+        tool_fn = await get_tool_fn(mcp, "get_person_profile")
+        result = await tool_fn("test-user", mock_context)
+
+        # Standard envelope
+        assert result["status"] == "error"
+        assert result["error_code"] == "session_expired"
+        assert result["action"] == "get_person_profile"
+        # Legacy keys preserved additively
+        assert result["error"] == "session_expired"
+        assert "--login" in result["resolution"]

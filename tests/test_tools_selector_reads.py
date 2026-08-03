@@ -78,6 +78,13 @@ class TestBrowseFeed:
     def _patch_deps(self, monkeypatch):
         self.page = MagicMock()
         self.page.evaluate = AsyncMock()
+        self.page.wait_for_selector = AsyncMock()
+        self.page.locator = MagicMock(
+            return_value=MagicMock(
+                first=MagicMock(count=AsyncMock(return_value=0)),
+                count=AsyncMock(return_value=0),
+            )
+        )
         browser = _mock_browser(self.page)
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.get_or_create_browser",
@@ -87,14 +94,47 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools._common.ensure_authenticated", AsyncMock()
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed.goto_and_check", AsyncMock()
+            "linkedin_mcp_server.tools.feed.ensure_page_healthy", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.ensure_page_healthy",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.handle_modal_close", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.handle_modal_close",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.effective_navigation_timeout_ms",
+            lambda minimum_ms: minimum_ms,
+        )
+        self.mock_goto_and_check = AsyncMock()
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.goto_and_check", self.mock_goto_and_check
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            self.mock_goto_and_check,
+            raising=False,
         )
 
     async def test_browse_feed_success(self, monkeypatch):
+        # Cards must be > 50 chars to pass the short-card filter
         card_texts = [
-            "Author One\nSome interesting post\n5 reactions\n2 comments\n2h ago",
-            "Author Two\nAnother post\n10 reactions\n1d ago",
-            "Author Three\nThird post content",
+            "Author One\nSome interesting post about AI and the future of technology with lots of detail\n5 reactions\n2 comments\n2h ago",
+            "Author Two\nAnother post sharing insights on machine learning trends and industry news\n10 reactions\n1d ago",
+            "Author Three\nThird post content with enough words to be a real post and not just UI chrome noise",
         ]
         loc = MagicMock()
         loc.count = AsyncMock(return_value=3)
@@ -105,6 +145,15 @@ class TestBrowseFeed:
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed._extract_post_identifier",
+            AsyncMock(return_value={"url": None, "post_urn": "urn:li:activity:111"}),
         )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
@@ -118,6 +167,23 @@ class TestBrowseFeed:
         assert result["status"] == "success"
         assert len(result["data"]["posts"]) == 3
         assert result["data"]["posts"][0]["author"] == "Author One"
+        assert "url" in result["data"]["posts"][0]
+        assert result["data"]["posts"][0]["post_urn"] == "urn:li:activity:111"
+        assert result["data"]["posts"][0]["card_type"] == "regular"
+        assert result["data"]["extraction_stats"]["total"] == 3
+        assert result["data"]["extraction_stats"]["with_post_urn"] == 3
+        assert result["data"]["extraction_stats"]["actionable"] == 3
+        assert result["data"]["extraction_stats"]["engagement_actionable"] == 3
+        assert result["data"]["extraction_stats"]["regular_total"] == 3
+        assert result["data"]["extraction_stats"]["regular_actionable"] == 3
+        assert result["data"]["extraction_stats"]["regular_engagement_actionable"] == 3
+        assert result["data"]["scroll_iterations"] == 0
+        assert result["data"]["stopped_reason"] == "limit_reached"
+        self.mock_goto_and_check.assert_awaited_once_with(
+            self.page,
+            "https://www.linkedin.com/feed/",
+            timeout_ms=45000,
+        )
 
     async def test_browse_feed_count_clamping(self, monkeypatch):
         loc = MagicMock()
@@ -127,6 +193,17 @@ class TestBrowseFeed:
         monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
         )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
@@ -149,7 +226,17 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -160,6 +247,8 @@ class TestBrowseFeed:
         result = await tool_fn(count=5)
         assert result["status"] == "success"
         assert result["data"]["posts"] == []
+        assert result["data"]["scroll_iterations"] == 0
+        assert result["data"]["stopped_reason"] == "empty_page"
 
     async def test_browse_feed_selector_fail(self, monkeypatch):
         chain_mock = MagicMock()
@@ -170,6 +259,17 @@ class TestBrowseFeed:
             "linkedin_mcp_server.tools.feed.SELECTORS",
             {"feed": {"post_cards": chain_mock}},
         )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.SELECTORS",
+            {"feed": {"post_cards": chain_mock}},
+            raising=False,
+        )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -178,7 +278,9 @@ class TestBrowseFeed:
         register_feed_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "browse_feed")
         result = await tool_fn(count=3)
-        assert result["status"] == "error"
+        # When all selectors fail, feed gracefully returns empty posts (not error)
+        assert result["status"] == "success"
+        assert result["data"]["posts"] == []
 
 
 # ══════════════════════════════════════════
@@ -204,7 +306,23 @@ class TestMyPostAnalytics:
             "linkedin_mcp_server.tools.feed.goto_and_check", AsyncMock()
         )
         monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr(
             "linkedin_mcp_server.tools.feed.handle_modal_close", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.handle_modal_close",
+            AsyncMock(),
+            raising=False,
+        )
+        monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
         )
 
     async def test_analytics_dom_success(self, monkeypatch):
@@ -225,13 +343,16 @@ class TestMyPostAnalytics:
         loc.count = AsyncMock(return_value=1)
         loc.nth = lambda idx: _make_nth(card_texts, idx)
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=loc),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._extract_post_url",
+            "linkedin_mcp_server.tools.extraction.feed_cards._extract_post_identifier",
             AsyncMock(
-                return_value="https://www.linkedin.com/feed/update/urn:li:activity:123/"
+                return_value={
+                    "url": "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+                    "post_urn": "urn:li:activity:123",
+                }
             ),
         )
         extract_page = AsyncMock(return_value="")
@@ -250,6 +371,22 @@ class TestMyPostAnalytics:
         assert result["status"] == "success"
         posts = result["data"]["posts"]
         assert len(posts) == 1
+        assert result["data"]["posts_requested"] == 5
+        assert result["data"]["posts_returned"] == 1
+        assert result["data"]["scroll_iterations"] == 6
+        assert result["data"]["stopped_reason"] == "stagnant"
+        assert result["data"]["activity_url_tried"] == [
+            "https://www.linkedin.com/in/me/recent-activity/shares/",
+        ]
+        assert (
+            result["data"]["activity_url_selected"]
+            == "https://www.linkedin.com/in/me/recent-activity/shares/"
+        )
+        assert result["data"]["activity_page_html_lengths"] == [None]
+        assert result["data"]["activity_last_error"] is None
+        assert result["warnings"] == [
+            "Recent activity returned fewer posts than requested; retry if you need a fuller history."
+        ]
         assert posts[0]["author"] == "Jane Doe"
         assert posts[0]["text_preview"] == "DOM activity post"
         assert posts[0]["reactions"] == 8
@@ -259,6 +396,7 @@ class TestMyPostAnalytics:
             posts[0]["url"]
             == "https://www.linkedin.com/feed/update/urn:li:activity:123/"
         )
+        assert posts[0]["post_urn"] == "urn:li:activity:123"
         extract_page.assert_not_called()
 
     async def test_analytics_profile_fallback_when_dom_empty(self, monkeypatch):
@@ -283,10 +421,15 @@ class TestMyPostAnalytics:
             MagicMock(return_value=MagicMock(extract_page=extract_page)),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=0))),
         )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -298,6 +441,22 @@ class TestMyPostAnalytics:
         assert result["status"] == "success"
         posts = result["data"]["posts"]
         assert len(posts) == 1
+        assert result["data"]["posts_requested"] == 5
+        assert result["data"]["posts_returned"] == 1
+        assert result["data"]["scroll_iterations"] == 0
+        # Navigations succeeded (goto_and_check is mocked to no-op) but every
+        # URL yielded zero cards — that's "empty_page", not nav failure.
+        assert result["data"]["stopped_reason"] == "empty_page"
+        assert result["data"]["activity_url_tried"] == [
+            "https://www.linkedin.com/in/me/recent-activity/shares/",
+            "https://www.linkedin.com/in/me/recent-activity/posts/",
+            "https://www.linkedin.com/in/me/recent-activity/all/",
+        ]
+        assert result["data"]["activity_url_selected"] is None
+        assert result["data"]["activity_any_nav_succeeded"] is True
+        assert result["data"]["activity_page_html_lengths"] == [None, None, None]
+        assert result["data"]["activity_last_error"] is None
+        assert result["warnings"] == []
         assert posts[0]["author"] == "Jane Doe"
         assert posts[0]["reactions"] == 50
         assert posts[0]["comments"] == 10
@@ -312,10 +471,15 @@ class TestMyPostAnalytics:
             MagicMock(return_value=MagicMock(extract_page=AsyncMock(return_value=""))),
         )
         monkeypatch.setattr(
-            "linkedin_mcp_server.tools.feed._resolve_activity_post_cards",
+            "linkedin_mcp_server.tools.extraction.feed_cards._resolve_activity_post_cards",
             AsyncMock(return_value=MagicMock(count=AsyncMock(return_value=0))),
         )
         monkeypatch.setattr("linkedin_mcp_server.tools.feed.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.asyncio.sleep",
+            AsyncMock(),
+            raising=False,
+        )
 
         from linkedin_mcp_server.tools.feed import register_feed_tools
         from fastmcp import FastMCP
@@ -326,6 +490,82 @@ class TestMyPostAnalytics:
         result = await tool_fn()
         assert result["status"] == "success"
         assert result["data"]["posts"] == []
+        assert result["data"]["posts_requested"] == 5
+        assert result["data"]["posts_returned"] == 0
+        assert result["data"]["scroll_iterations"] == 0
+        # Navigations succeeded but every URL yielded zero cards AND fallback
+        # also returned 0 → genuine empty_page (zero-posts account semantic).
+        assert result["data"]["stopped_reason"] == "empty_page"
+        assert result["data"]["activity_url_tried"] == [
+            "https://www.linkedin.com/in/me/recent-activity/shares/",
+            "https://www.linkedin.com/in/me/recent-activity/posts/",
+            "https://www.linkedin.com/in/me/recent-activity/all/",
+        ]
+        assert result["data"]["activity_url_selected"] is None
+        assert result["data"]["activity_any_nav_succeeded"] is True
+        assert result["data"]["activity_page_html_lengths"] == [None, None, None]
+        assert result["data"]["activity_last_error"] is None
+        assert result["warnings"] == []
+
+    async def test_analytics_diagnostics_populated_when_all_urls_fail_to_navigate(
+        self, monkeypatch
+    ):
+        """D.2 R2 — every navigation raises; response still carries full diagnostics.
+
+        Mirrors the 2026-04-25 live failure mode where all 3 candidate URLs failed
+        in <5s each. Pre-R2 the response would show activity_url_tried: []; the
+        R2 contract guarantees in-band diagnostics on the failure path.
+        """
+        nav_calls: list[str] = []
+
+        async def _failing_goto(_page, url: str, **_kwargs):
+            nav_calls.append(url)
+            raise RuntimeError(f"nav failed for {url}")
+
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.goto_and_check", _failing_goto
+        )
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.extraction.feed_cards.goto_and_check",
+            _failing_goto,
+            raising=False,
+        )
+        # Text fallback returns nothing — exercises the all-fail-then-empty-fallback path.
+        monkeypatch.setattr(
+            "linkedin_mcp_server.tools.feed.LinkedInExtractor",
+            MagicMock(return_value=MagicMock(extract_page=AsyncMock(return_value=""))),
+        )
+
+        from linkedin_mcp_server.tools.feed import register_feed_tools
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test")
+        register_feed_tools(mcp)
+        tool_fn = await get_tool_fn(mcp, "get_my_post_analytics")
+        result = await tool_fn()
+
+        assert result["status"] == "success"
+        assert result["data"]["posts"] == []
+        assert result["data"]["activity_url_tried"] == [
+            "https://www.linkedin.com/in/me/recent-activity/shares/",
+            "https://www.linkedin.com/in/me/recent-activity/posts/",
+            "https://www.linkedin.com/in/me/recent-activity/all/",
+        ]
+        assert result["data"]["activity_url_selected"] is None
+        # No URL completed goto_and_check → any_nav_succeeded must be False.
+        assert result["data"]["activity_any_nav_succeeded"] is False
+        # Per-URL nav failed before HTML could be measured → all entries None
+        assert result["data"]["activity_page_html_lengths"] == [None, None, None]
+        # last_error_message captures the failure reason
+        assert result["data"]["activity_last_error"] is not None
+        assert "nav failed" in result["data"]["activity_last_error"]
+        # Distinct stopped_reason for the all-nav-failed case (not zero-posts).
+        assert (
+            result["data"]["stopped_reason"]
+            == "activity_navigation_failed_fallback_used"
+        )
+        # All 3 URLs were actually attempted (not short-circuited)
+        assert len(nav_calls) == 3
 
     async def test_analytics_error_when_dom_and_fallback_fail(self, monkeypatch):
         monkeypatch.setattr(
@@ -395,6 +635,33 @@ class TestProfileAnalytics:
         assert data["search_appearances"] == 45
         assert data["post_impressions"] == 800
 
+    async def test_merges_metrics_across_pages(self, monkeypatch):
+        page_texts = iter(
+            [
+                "120 profile views",
+                "45 search appearances",
+                "800 post impressions",
+            ]
+        )
+        body_loc = MagicMock()
+        body_loc.inner_text = AsyncMock(side_effect=lambda timeout=0: next(page_texts))
+        self.page.locator = MagicMock(return_value=body_loc)
+
+        from linkedin_mcp_server.tools.feed import register_feed_tools
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test")
+        register_feed_tools(mcp)
+        tool_fn = await get_tool_fn(mcp, "get_profile_analytics")
+        result = await tool_fn()
+        assert result["status"] == "success"
+        data = result["data"]
+        assert data == {
+            "profile_views": 120,
+            "search_appearances": 45,
+            "post_impressions": 800,
+        }
+
     async def test_missing_metrics(self, monkeypatch):
         body_loc = MagicMock()
         body_loc.inner_text = AsyncMock(return_value="Nothing useful here")
@@ -444,13 +711,17 @@ class TestGetConversations:
         def make_row(idx):
             m = MagicMock()
             m.inner_text = AsyncMock(return_value=row_texts[idx])
-            # link locator
-            link = MagicMock()
-            link.count = AsyncMock(return_value=1)
-            link.get_attribute = AsyncMock(
-                return_value=f"/messaging/thread/thread-{idx}/"
+            m.evaluate = AsyncMock(
+                side_effect=[
+                    f"/messaging/thread/thread-{idx}/",
+                    f"/in/user-{idx}/",
+                ]
             )
-            m.locator = MagicMock(return_value=MagicMock(first=link, count=link.count))
+            m.locator = MagicMock(
+                return_value=MagicMock(
+                    first=MagicMock(), count=AsyncMock(return_value=0)
+                )
+            )
             return m
 
         loc = MagicMock()
@@ -475,6 +746,15 @@ class TestGetConversations:
         convos = result["data"]["conversations"]
         assert len(convos) == 2
         assert convos[0]["name"] == "Alice Smith"
+        assert (
+            convos[0]["thread_url"]
+            == "https://www.linkedin.com/messaging/thread/thread-0/"
+        )
+        assert convos[0]["thread_id"] == "thread-0"
+        assert (
+            convos[0]["participant_profile_url"]
+            == "https://www.linkedin.com/in/user-0/"
+        )
 
     async def test_conversations_selector_fail(self, monkeypatch):
         chain_mock = MagicMock()
@@ -577,6 +857,21 @@ class TestReadConversation:
         # thread_id may be None when URL doesn't contain a thread path
         assert "thread_id" in result["data"]
 
+    async def test_read_by_thread_url(self, monkeypatch):
+        self._setup_thread_messages(monkeypatch, ["Alice\n2:00 PM\nHello!"])
+
+        from linkedin_mcp_server.tools.messaging import register_messaging_tools
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test")
+        register_messaging_tools(mcp)
+        tool_fn = await get_tool_fn(mcp, "read_conversation")
+        result = await tool_fn(
+            thread_url="https://www.linkedin.com/messaging/thread/t-123/"
+        )
+        assert result["status"] == "success"
+        assert result["data"]["thread_id"] == "t-123"
+
     async def test_read_neither_arg(self, monkeypatch):
         self._setup_thread_messages(monkeypatch, [])
 
@@ -612,7 +907,9 @@ class TestGetPendingInvitations:
             "linkedin_mcp_server.tools.network.goto_and_check", AsyncMock()
         )
 
-    def _make_invitation_rows(self, monkeypatch, rows):
+    def _make_invitation_rows(self, rows):
+        """Set up page.locator to return invitation card rows."""
+
         def make_row(idx):
             text, href = rows[idx]
             m = MagicMock()
@@ -628,20 +925,22 @@ class TestGetPendingInvitations:
             )
             return m
 
-        loc = MagicMock()
-        loc.count = AsyncMock(return_value=len(rows))
-        loc.nth = lambda idx: make_row(idx)
+        card_loc = MagicMock()
+        card_loc.count = AsyncMock(return_value=len(rows))
+        card_loc.nth = lambda idx: make_row(idx)
 
-        chain_mock = MagicMock()
-        chain_mock.resolve = AsyncMock(return_value=loc)
-        monkeypatch.setattr(
-            "linkedin_mcp_server.tools.network.SELECTORS",
-            {"network": {"invitation_rows": chain_mock}},
-        )
+        empty_loc = MagicMock()
+        empty_loc.count = AsyncMock(return_value=0)
 
-    async def test_invitations_success(self, monkeypatch):
+        def locator_router(sel):
+            if "invitation-card" in sel:
+                return card_loc
+            return empty_loc
+
+        self.page.locator = MagicMock(side_effect=locator_router)
+
+    async def test_invitations_success(self):
         self._make_invitation_rows(
-            monkeypatch,
             [
                 ("Jane Doe\nSoftware Engineer\n5 mutual connections", "/in/janedoe"),
                 ("Bob Smith\nDesigner", "/in/bobsmith"),
@@ -664,9 +963,8 @@ class TestGetPendingInvitations:
         assert invitations[0]["invitation_index"] == 0
         assert invitations[0]["profile_url"] == "https://www.linkedin.com/in/janedoe"
 
-    async def test_invitations_relative_href(self, monkeypatch):
+    async def test_invitations_relative_href(self):
         self._make_invitation_rows(
-            monkeypatch,
             [
                 ("User\nTitle", "/in/relative-path"),
             ],
@@ -682,15 +980,18 @@ class TestGetPendingInvitations:
         inv = result["data"]["invitations"][0]
         assert inv["profile_url"].startswith("https://www.linkedin.com")
 
-    async def test_invitations_selector_fail(self, monkeypatch):
-        chain_mock = MagicMock()
-        chain_mock.resolve = AsyncMock(
-            side_effect=_make_selector_error("network_invitation_rows")
-        )
-        monkeypatch.setattr(
-            "linkedin_mcp_server.tools.network.SELECTORS",
-            {"network": {"invitation_rows": chain_mock}},
-        )
+    async def test_invitations_zero_returns_empty(self):
+        """When no invitation-specific selectors match, return empty list."""
+        # page.locator returns 0-count for all selectors
+        empty_loc = MagicMock()
+        empty_loc.count = AsyncMock(return_value=0)
+        self.page.locator = MagicMock(return_value=empty_loc)
+        # get_by_role fallback also returns empty
+        filter_loc = MagicMock()
+        filter_loc.count = AsyncMock(return_value=0)
+        role_loc = MagicMock()
+        role_loc.filter = MagicMock(return_value=filter_loc)
+        self.page.get_by_role = MagicMock(return_value=role_loc)
 
         from linkedin_mcp_server.tools.network import register_network_tools
         from fastmcp import FastMCP
@@ -699,4 +1000,5 @@ class TestGetPendingInvitations:
         register_network_tools(mcp)
         tool_fn = await get_tool_fn(mcp, "get_pending_invitations")
         result = await tool_fn()
-        assert result["status"] == "error"
+        assert result["status"] == "success"
+        assert result["data"]["invitations"] == []

@@ -27,16 +27,9 @@ async def detect_rate_limit(page: Page) -> None:
     Raises:
         RateLimitError: If any rate-limiting or security challenge is detected
     """
-    from .safety import get_captcha_count
+    from .safety import challenge_cooldown_seconds, get_captcha_count
 
-    # Graduated wait times based on how many CAPTCHAs the session has seen
-    captcha_count = get_captcha_count()
-    if captcha_count == 0:
-        captcha_wait = 300
-    elif captcha_count == 1:
-        captcha_wait = 1800
-    else:
-        captcha_wait = 3600
+    captcha_wait = challenge_cooldown_seconds(get_captcha_count() + 1)
 
     # Check URL for security challenges
     current_url = page.url
@@ -45,6 +38,7 @@ async def detect_rate_limit(page: Page) -> None:
             "LinkedIn security checkpoint detected. "
             "You may need to verify your identity or wait before continuing.",
             suggested_wait_time=captcha_wait,
+            challenge_type="checkpoint",
         )
 
     # Check for CAPTCHA
@@ -56,6 +50,7 @@ async def detect_rate_limit(page: Page) -> None:
             raise RateLimitError(
                 "CAPTCHA challenge detected. Manual intervention required.",
                 suggested_wait_time=captcha_wait,
+                challenge_type="captcha",
             )
     except RateLimitError:
         raise
@@ -97,7 +92,10 @@ async def detect_rate_limit(page: Page) -> None:
 
 async def detect_rate_limit_post_action(page: Page) -> None:
     """Detect post-submit challenge pages and inline action throttling messages."""
+    from .safety import challenge_cooldown_seconds, get_captcha_count
+
     await detect_rate_limit(page)
+    challenge_wait = challenge_cooldown_seconds(get_captcha_count() + 1)
 
     try:
         challenge_markers = page.locator(
@@ -108,7 +106,8 @@ async def detect_rate_limit_post_action(page: Page) -> None:
         if await challenge_markers.count() > 0:
             raise RateLimitError(
                 "LinkedIn challenge detected after action submission.",
-                suggested_wait_time=3600,
+                suggested_wait_time=challenge_wait,
+                challenge_type="captcha",
             )
     except RateLimitError:
         raise
@@ -133,6 +132,7 @@ async def detect_rate_limit_post_action(page: Page) -> None:
             raise RateLimitError(
                 "LinkedIn reported temporary action restriction.",
                 suggested_wait_time=1800,
+                challenge_type="inline_action_restriction",
             )
     except RateLimitError:
         raise
@@ -212,24 +212,38 @@ async def scroll_to_bottom(
 async def handle_modal_close(page: Page) -> bool:
     """Close any popup modals that might be blocking content.
 
+    Checks multiple button patterns in priority order: artdeco dismiss,
+    aria-label variants, and common label text ("Got it", "OK", etc.).
+    Also handles native ``<dialog>`` elements and ``[role="dialog"]`` overlays.
+
     Returns:
         True if a modal was closed, False otherwise
     """
-    try:
-        close_button = page.locator(
-            'button[aria-label="Dismiss"], '
-            'button[aria-label="Close"], '
-            "button.artdeco-modal__dismiss"
-        ).first
+    # Priority-ordered close-button selectors (most specific first)
+    close_selectors = (
+        "button.artdeco-modal__dismiss",
+        'button[aria-label="Dismiss"]',
+        'button[aria-label="Close"]',
+        '[role="dialog"] button[aria-label="Dismiss"]',
+        '[role="dialog"] button[aria-label="Close"]',
+        'dialog[open] button[aria-label="Close"]',
+        "button:has-text('Got it')",
+        "button:has-text('OK')",
+        "button:has-text('Not now')",
+    )
 
-        if await close_button.is_visible(timeout=1000):
-            await close_button.click()
-            await asyncio.sleep(0.5)
-            logger.debug("Closed modal")
-            return True
-    except PlaywrightTimeoutError:
-        pass
-    except Exception as e:
-        logger.debug("Error closing modal: %s", e)
+    for selector in close_selectors:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=500):
+                await btn.click()
+                await asyncio.sleep(0.5)
+                logger.debug("Closed modal via %s", selector)
+                return True
+        except PlaywrightTimeoutError:
+            continue
+        except Exception as e:
+            logger.debug("Error trying modal close selector %s: %s", selector, e)
+            continue
 
     return False

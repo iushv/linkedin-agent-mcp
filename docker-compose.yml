@@ -5,5 +5,6 @@ services:
       - ~/.linkedin-mcp:/home/pwuser/.linkedin-mcp
     environment:
       - LOG_LEVEL=WARNING
+      - TIMEOUT=60000
     stdin_open: true
     tty: true

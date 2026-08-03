@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from typing import Any
+from urllib.parse import urljoin
 
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
@@ -21,6 +24,11 @@ from linkedin_mcp_server.tools._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CONV_OPTIONS_RE = re.compile(
+    r"Open the options list in your conversation with (.+)",
+    re.IGNORECASE,
+)
 
 
 def _parse_conversation_item(text: str) -> dict[str, Any]:
@@ -53,6 +61,72 @@ def _parse_message_item(text: str) -> dict[str, str]:
     }
 
 
+def _absolute_linkedin_url(href: str | None) -> str | None:
+    if not href:
+        return None
+    return urljoin("https://www.linkedin.com", href)
+
+
+async def _extract_thread_url(row: Any) -> str | None:
+    try:
+        href = await row.evaluate(
+            """(el) => {
+                const selectors = [
+                  "a[href*='/messaging/thread/']",
+                  "[data-thread-id]",
+                  "[data-conversation-id]",
+                ];
+                const directLink = el.querySelector("a[href*='/messaging/thread/']");
+                if (directLink) {
+                  return directLink.getAttribute("href");
+                }
+                const nodes = [el, ...el.querySelectorAll("*")];
+                for (const node of nodes.slice(0, 40)) {
+                  const attrs = [
+                    node.getAttribute?.("href"),
+                    node.getAttribute?.("data-thread-id"),
+                    node.getAttribute?.("data-conversation-id"),
+                    node.getAttribute?.("data-id"),
+                  ];
+                  for (const value of attrs) {
+                    if (!value) continue;
+                    const match = String(value).match(/\\/messaging\\/thread\\/[^/?]+/);
+                    if (match) return match[0];
+                  }
+                }
+                return null;
+            }"""
+        )
+    except Exception:
+        href = None
+
+    return _absolute_linkedin_url(href)
+
+
+async def _extract_participant_profile_url(row: Any) -> str | None:
+    try:
+        href = await row.evaluate(
+            """(el) => {
+                const directLink = el.querySelector("a[href*='/in/']");
+                if (directLink) {
+                  return directLink.getAttribute("href");
+                }
+                const nodes = [el, ...el.querySelectorAll("*")];
+                for (const node of nodes.slice(0, 40)) {
+                  const hrefValue = node.getAttribute?.("href");
+                  if (hrefValue && /\\/in\\//.test(hrefValue)) {
+                    return hrefValue;
+                  }
+                }
+                return null;
+            }"""
+        )
+    except Exception:
+        href = None
+
+    return _absolute_linkedin_url(href)
+
+
 def register_messaging_tools(mcp: FastMCP) -> None:
     """Register messaging tools."""
 
@@ -80,34 +154,94 @@ def register_messaging_tools(mcp: FastMCP) -> None:
                 )
 
             await goto_and_check(page, "https://www.linkedin.com/messaging/")
-            rows = await SELECTORS["messaging"]["conversation_items"].resolve(page)
+
+            # Wait for conversation list to load
+            try:
+                await page.wait_for_selector(
+                    "[aria-label*='Conversation' i], [role='list']",
+                    timeout=8000,
+                )
+            except Exception:
+                logger.debug("Messaging: no conversation list selector found")
+
+            # 2025+ DOM: conversations in list[aria-label="Conversation List"]
+            rows = None
+            for conv_sel in (
+                "list:has-text('Conversation List') > listitem",
+                "[aria-label*='Conversation' i] > [role='listitem']",
+                "[aria-label*='Conversation' i] > li",
+            ):
+                try:
+                    loc = page.locator(conv_sel)
+                    if await loc.count() > 0:
+                        rows = loc
+                        break
+                except Exception:
+                    continue
+
+            # Legacy fallback
+            if rows is None:
+                try:
+                    rows = await SELECTORS["messaging"]["conversation_items"].resolve(
+                        page
+                    )
+                except Exception:
+                    logger.debug("Legacy messaging selectors also failed")
+                    rows = page.get_by_role("listitem").filter(
+                        has=page.locator(
+                            "button[aria-label*='options list in your conversation' i]"
+                        )
+                    )
 
             conversations: list[dict[str, Any]] = []
             total_rows = await rows.count()
 
             for idx in range(total_rows):
+                if len(conversations) >= safe_limit:
+                    break
                 row = rows.nth(idx)
-                link = row.locator("a[href*='/messaging/thread/']").first
-                if await link.count() == 0:
+
+                try:
+                    text = await row.inner_text(timeout=2000)
+                except Exception:
                     continue
 
-                text = await row.inner_text(timeout=2000)
-                parsed = _parse_conversation_item(text)
-                href = await link.get_attribute("href")
-                thread_id = extract_thread_id_from_url(href or "") if href else None
+                if not text or not text.strip():
+                    continue
 
-                if href and href.startswith("/"):
-                    href = f"https://www.linkedin.com{href}"
+                parsed = _parse_conversation_item(text)
+
+                # Extract participant names from options button aria-label
+                try:
+                    opts_btn = row.locator(
+                        "button[aria-label*='options list in your conversation' i]"
+                    ).first
+                    if await opts_btn.count() > 0:
+                        opts_label = await opts_btn.get_attribute(
+                            "aria-label", timeout=300
+                        )
+                        if opts_label:
+                            m = _CONV_OPTIONS_RE.search(opts_label)
+                            if m:
+                                parsed["name"] = m.group(1).strip()
+                except Exception:
+                    pass
+
+                thread_url = await _extract_thread_url(row)
+                participant_profile_url = await _extract_participant_profile_url(row)
+                thread_id_val = (
+                    extract_thread_id_from_url(thread_url or "") if thread_url else None
+                )
 
                 conversations.append(
                     {
                         **parsed,
-                        "profile_url": href,
-                        "thread_id": thread_id,
+                        "profile_url": thread_url,
+                        "thread_url": thread_url,
+                        "thread_id": thread_id_val,
+                        "participant_profile_url": participant_profile_url,
                     }
                 )
-                if len(conversations) >= safe_limit:
-                    break
 
             if ctx:
                 await ctx.report_progress(
@@ -128,14 +262,17 @@ def register_messaging_tools(mcp: FastMCP) -> None:
     )
     async def read_conversation(
         thread_id: str | None = None,
+        thread_url: str | None = None,
         profile_url: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Read messages from a conversation by thread id or profile URL."""
+        """Read messages from a conversation by thread id, thread URL, or profile URL."""
 
         async def _fetch() -> dict[str, Any]:
-            if not thread_id and not profile_url:
-                raise ValueError("Either thread_id or profile_url must be provided")
+            if not thread_id and not thread_url and not profile_url:
+                raise ValueError(
+                    "Either thread_id, thread_url, or profile_url must be provided"
+                )
 
             browser = await get_or_create_browser()
             page = browser.page
@@ -146,9 +283,15 @@ def register_messaging_tools(mcp: FastMCP) -> None:
                 )
 
             resolved_thread_id = thread_id
-            if thread_id:
+            if thread_url:
+                resolved_thread_id = extract_thread_id_from_url(thread_url)
+                if not resolved_thread_id:
+                    raise ValueError("Invalid LinkedIn thread URL")
+
+            if resolved_thread_id:
                 await goto_and_check(
-                    page, f"https://www.linkedin.com/messaging/thread/{thread_id}/"
+                    page,
+                    f"https://www.linkedin.com/messaging/thread/{resolved_thread_id}/",
                 )
             else:
                 profile = normalize_profile_url(profile_url or "")
@@ -157,13 +300,43 @@ def register_messaging_tools(mcp: FastMCP) -> None:
                 await goto_and_check(page, "https://www.linkedin.com/messaging/")
                 resolved_thread_id = extract_thread_id_from_url(page.url)
 
-            items = await SELECTORS["messaging"]["thread_messages"].resolve(page)
+            # Wait for thread messages to load
+            await asyncio.sleep(2)
+
+            # 2025+ DOM: thread messages are listitem elements in a list
+            # within the conversation detail pane
+            items = None
+            for msg_sel in (
+                # Thread message list items (contain "{Name} sent the following")
+                "[role='listitem']:has(a[href*='/in/'])",
+            ):
+                try:
+                    loc = page.locator(msg_sel)
+                    if await loc.count() > 0:
+                        items = loc
+                        break
+                except Exception:
+                    continue
+
+            # Legacy fallback
+            if items is None:
+                try:
+                    items = await SELECTORS["messaging"]["thread_messages"].resolve(
+                        page
+                    )
+                except Exception:
+                    # Broadest fallback: all listitem in the message area
+                    items = page.get_by_role("listitem")
+
             messages: list[dict[str, str]] = []
 
             for idx in range(await items.count()):
                 item = items.nth(idx)
-                text = await item.inner_text(timeout=2000)
-                if text.strip():
+                try:
+                    text = await item.inner_text(timeout=2000)
+                except Exception:
+                    continue
+                if text and text.strip():
                     messages.append(_parse_message_item(text))
 
             if ctx:

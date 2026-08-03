@@ -10,7 +10,7 @@ from linkedin_mcp_server.core.exceptions import RateLimitError
 from linkedin_mcp_server.core.safety import (
     get_captcha_count,
     get_session_health,
-    is_session_degraded,
+    is_engagement_degraded,
     record_security_challenge,
     reset_safety_state,
 )
@@ -27,13 +27,13 @@ def _clean_safety():
 
 class TestSessionDegradation:
     def test_not_degraded_initially(self):
-        assert not is_session_degraded()
+        assert not is_engagement_degraded()
         assert get_captcha_count() == 0
 
     @pytest.mark.asyncio
     async def test_degraded_after_one_captcha(self):
         await record_security_challenge()
-        assert is_session_degraded()
+        assert is_engagement_degraded()
         assert get_captcha_count() == 1
 
     @pytest.mark.asyncio
@@ -77,7 +77,7 @@ class TestRunReadToolCascade:
         assert result["error_code"] == "rate_limit"
         # The CAPTCHA should have been recorded
         assert get_captcha_count() == 1
-        assert is_session_degraded()
+        assert is_engagement_degraded()
 
     @pytest.mark.asyncio
     async def test_non_captcha_rate_limit_does_not_record(self):
@@ -85,7 +85,9 @@ class TestRunReadToolCascade:
         from linkedin_mcp_server.tools._common import run_read_tool
 
         async def _fetch_throttled():
-            raise RateLimitError("Rate limit message detected.", suggested_wait_time=1800)
+            raise RateLimitError(
+                "Rate limit message detected.", suggested_wait_time=1800
+            )
 
         with (
             patch(f"{_COMMON}.acquire_browser_lock", new_callable=AsyncMock),
@@ -103,7 +105,7 @@ class TestRunReadToolCascade:
 
     @pytest.mark.asyncio
     async def test_run_read_tool_checks_session_health(self):
-        """run_read_tool should call check_session_health before executing."""
+        """run_read_tool should not inherit write-only session blocking."""
         from linkedin_mcp_server.tools._common import run_read_tool
 
         health_mock = AsyncMock()
@@ -119,7 +121,7 @@ class TestRunReadToolCascade:
         ):
             await run_read_tool(action="test_read", fetch_fn=_fetch_ok)
 
-        health_mock.assert_awaited_once()
+        health_mock.assert_not_awaited()
 
 
 class TestProxyConfig:

@@ -24,6 +24,9 @@ READ_TOOLS = [
     "get_saved_jobs",
     "get_job_recommendations",
     "browse_feed",
+    "get_post_reactions",
+    "get_post_commenters",
+    "get_engagement_health",
 ]
 
 WRITE_TOOLS_NON_DESTRUCTIVE = [

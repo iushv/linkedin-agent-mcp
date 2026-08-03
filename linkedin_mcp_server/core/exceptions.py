@@ -16,15 +16,30 @@ class AuthenticationError(LinkedInScraperException):
 class RateLimitError(LinkedInScraperException):
     """Raised when rate limiting is detected."""
 
-    def __init__(self, message: str, suggested_wait_time: int = 300):
+    def __init__(
+        self,
+        message: str,
+        suggested_wait_time: int = 300,
+        *,
+        challenge_type: str | None = None,
+        context: dict[str, object] | None = None,
+    ):
         super().__init__(message)
         self.suggested_wait_time = suggested_wait_time
+        self.challenge_type = challenge_type
+        self.context = context or {}
 
 
 class ElementNotFoundError(LinkedInScraperException):
     """Raised when an expected element is not found."""
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        context: dict[str, object] | None = None,
+    ):
+        super().__init__(message)
+        self.context = context or {}
 
 
 class ProfileNotFoundError(LinkedInScraperException):

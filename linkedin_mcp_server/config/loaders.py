@@ -244,7 +244,7 @@ def load_from_args(config: AppConfig) -> AppConfig:
         type=positive_int,
         default=None,
         metavar="MS",
-        help="Browser timeout for page operations in milliseconds (default: 5000)",
+        help="Browser timeout for page operations in milliseconds (default: 30000)",
     )
 
     parser.add_argument(
@@ -266,6 +266,13 @@ def load_from_args(config: AppConfig) -> AppConfig:
         "--status",
         action="store_true",
         help="Check if current session is valid and exit",
+    )
+
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Print environment diagnostics (versions, browser binaries, "
+        "profile lock, session) and exit",
     )
 
     parser.add_argument(
@@ -358,6 +365,9 @@ def load_from_args(config: AppConfig) -> AppConfig:
 
     if args.status:
         config.server.status = True
+
+    if args.doctor:
+        config.server.doctor = True
 
     if args.logout:
         config.server.logout = True

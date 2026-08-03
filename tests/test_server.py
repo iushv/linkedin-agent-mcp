@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     "create_poll",
     "delete_post",
     "repost",
+    "get_engagement_health",
     "react_to_post",
     "comment_on_post",
     "reply_to_comment",
@@ -37,6 +38,8 @@ EXPECTED_TOOLS = {
     "respond_to_invitation",
     "follow_person",
     "browse_feed",
+    "get_post_reactions",
+    "get_post_commenters",
     "get_my_post_analytics",
     "get_profile_analytics",
     "close_session",
@@ -44,11 +47,11 @@ EXPECTED_TOOLS = {
 
 
 class TestServerRegistration:
-    def test_all_expected_tools_registered(self):
+    async def test_all_expected_tools_registered(self):
         from linkedin_mcp_server.server import create_mcp_server
 
         mcp = create_mcp_server()
-        registered = {name for name in mcp._tool_manager._tools}
+        registered = {tool.name for tool in await mcp.list_tools()}
         missing = EXPECTED_TOOLS - registered
         assert not missing, f"Missing tools: {missing}"
 

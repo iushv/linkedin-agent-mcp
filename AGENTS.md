@@ -10,6 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Development dependencies: `uv sync --group dev`
 - Bump version: `uv version --bump minor` (or `major`, `patch`) - this is the **only manual step** for a release. The GitHub Actions release workflow (`.github/workflows/release.yml`) automatically handles: manifest.json/docker-compose.yml version updates, git tag, Docker build & push, DXT extension, GitHub release, and PyPI publish. After the workflow completes, manually file a PR in the MCP registry to update the version.
 - Install browser: `uv run patchright install chromium`
+- Patchright bump checklist:
+  1. Change `patchright==X.Y.Z` in `pyproject.toml`
+  2. Run `uv lock && uv sync`
+  3. Run `uv run patchright install chromium`
+  4. Run `uv run python scripts/diag_dom.py`
 - Run server locally: `uv run -m linkedin_mcp_server --no-headless`
 - Run via uvx (PyPI): `uvx linkedin-scraper-mcp`
 - Run in Docker: `docker run -it --rm -v ~/.linkedin-mcp:/home/pwuser/.linkedin-mcp iushv/linkedin-agent-mcp:latest`
@@ -55,25 +60,21 @@ This is a **LinkedIn MCP (Model Context Protocol) Server** that enables AI assis
 - **Profile Tools** (`tools/profile.py`) - Headline, Open To Work, and skill updates
 - **Recommendation Tools** (`tools/recommendations.py`) - Personalized job recommendations
 
-**Available MCP Tools:**
+**Available MCP Tools (36, ✍️ = write tool with confirm/dry_run gating):**
 
-| Tool | Description |
-|------|-------------|
-| `get_person_profile` | Get profile with explicit `sections` selection (experience, education, interests, honors, languages, contact_info) |
-| `get_company_profile` | Get company info with explicit `sections` selection (posts, jobs) |
-| `get_company_posts` | Get recent posts from company feed |
-| `get_job_details` | Get job posting details |
-| `search_jobs` | Search jobs by keywords and location |
-| `search_people` | Search LinkedIn members by keywords and resolved filters (`match_mode=auto|strict|broad`) |
-| `get_company_people` | Find people at a company with optional alumni/title filters |
-| `save_job` | Save a LinkedIn job posting |
-| `get_saved_jobs` | List the current account's saved jobs |
-| `update_profile_headline` | Update the logged-in profile headline |
-| `set_open_to_work` | Configure Open To Work preferences |
-| `add_profile_skills` | Add skills to the logged-in profile |
-| `set_featured_skills` | Best-effort featured skill ordering |
-| `get_job_recommendations` | Get personalized job recommendations |
-| `close_session` | Close browser session and clean up resources |
+| Category | Tools |
+|----------|-------|
+| Profiles & people | `get_person_profile`, `get_company_profile`, `get_company_posts`, `search_people`, `get_company_people` |
+| Jobs | `search_jobs`, `get_job_details`, `save_job` ✍️, `get_saved_jobs`, `get_job_recommendations` |
+| Feed & analytics | `browse_feed`, `get_post_reactions`, `get_post_commenters`, `get_my_post_analytics`, `get_profile_analytics` |
+| Publishing | `create_post` ✍️, `create_poll` ✍️, `repost` ✍️, `delete_post` ✍️ (destructive) |
+| Engagement | `react_to_post` ✍️, `comment_on_post` ✍️, `reply_to_comment` ✍️, `like_comment` ✍️, `get_engagement_health` |
+| Messaging | `get_conversations`, `read_conversation`, `send_message` ✍️ |
+| Network | `send_connection_request` ✍️, `get_pending_invitations`, `respond_to_invitation` ✍️, `follow_person` ✍️ |
+| Own profile | `update_profile_headline` ✍️, `set_open_to_work` ✍️, `add_profile_skills` ✍️, `set_featured_skills` ✍️ |
+| Session | `close_session` |
+
+Write-tool safety: confirmation required (`confirm=true` or allowlist in `~/.linkedin-mcp/config.json`), `dry_run` previews, daily/session quotas, CAPTCHA cooldown escalation, and a hash-only audit log at `~/.linkedin-mcp/audit.log`. The authoritative tool list lives in `tests/test_server.py::EXPECTED_TOOLS` — update it, this table, and README.md together when adding tools.
 
 **Tool Return Format:**
 
@@ -85,7 +86,11 @@ Additive structured fields:
 - `search_people` and `get_company_people` return paginated `results` arrays with normalized person-card fields plus `filters_applied` and `warnings`. `search_people.match_mode` controls how aggressively the tool broadens when exact matches are sparse.
 - `get_saved_jobs` and `get_job_recommendations` return paginated `jobs` arrays with normalized job-card fields.
 - Profile-write tools return standardized write envelopes and surface preview/change details under `data`.
-- `get_my_post_analytics` returns parsed post entries under `data.posts` with `author`, `url`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
+- `browse_feed` and `get_my_post_analytics` add `post_urn` alongside `url` so feed/activity posts remain actionable even when LinkedIn hides a visible permalink.
+- `get_post_reactions` and `get_post_commenters` return paginated `results` arrays for post-engagement outreach workflows.
+- `get_conversations` adds `thread_url` and `participant_profile_url`, and `read_conversation` accepts `thread_url` in addition to `thread_id` / `profile_url`.
+- Engagement-style write tools accept canonical post URLs, relative post paths, or raw `urn:li:activity:*` references and apply a temporary engagement cooldown after CAPTCHA/checkpoint challenges.
+- `get_my_post_analytics` returns parsed post entries under `data.posts` with `author`, `url`, `post_urn`, `text_preview`, `time_ago`, `reactions`, `comments`, `reposts`, and `impressions`.
 
 **Scraping Architecture (`scraping/`):**
 

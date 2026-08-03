@@ -8,7 +8,9 @@ Implements a simplified two-phase startup:
 
 import asyncio
 import logging
+import subprocess
 import sys
+from pathlib import Path
 from typing import Literal
 
 import inquirer
@@ -25,6 +27,7 @@ from linkedin_mcp_server.drivers.browser import (
     get_or_create_browser,
     get_profile_dir,
     profile_exists,
+    profile_lock_holder,
     set_headless,
 )
 from linkedin_mcp_server.exceptions import CredentialsNotFoundError
@@ -165,6 +168,165 @@ def profile_info_and_exit() -> None:
         sys.exit(1)
 
 
+def build_fingerprint() -> str:
+    """Content hash of the installed package source.
+
+    A version number cannot distinguish two builds of the same version, which
+    is exactly the case that bites after `uv tool install` no-ops on a
+    same-version rebuild: the code changed, `4.1.0` did not, and the stale
+    deploy looks identical to the fixed one. This hash changes whenever any
+    module does, so "am I looking at the deployed fix?" is one line of output
+    rather than a fresh investigation.
+    """
+    import hashlib
+    from pathlib import Path as _Path
+
+    package_dir = _Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(package_dir.rglob("*.py")):
+            digest.update(path.relative_to(package_dir).as_posix().encode())
+            digest.update(path.read_bytes())
+    except OSError:
+        return "unknown"
+    return digest.hexdigest()[:12]
+
+
+def _diagnose_browser_binaries(headless: bool) -> tuple[bool, list[str]]:
+    """Report expected vs on-disk Patchright browser binaries."""
+    from linkedin_mcp_server.drivers.browser import (
+        _parse_patchright_install_locations,
+        _required_browsers,
+    )
+
+    lines: list[str] = []
+    try:
+        dry_run = subprocess.run(
+            [sys.executable, "-m", "patchright", "install", "--dry-run", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return False, [f"  ❌ could not run patchright dry-run: {exc}"]
+
+    locations = _parse_patchright_install_locations(
+        f"{dry_run.stdout or ''}\n{dry_run.stderr or ''}"
+    )
+    required = _required_browsers(headless)
+    healthy = True
+
+    for name in required:
+        path = locations.get(name)
+        if path is None:
+            healthy = False
+            lines.append(f"  ❌ {name}: expected path unknown (could not parse)")
+        elif path.exists():
+            lines.append(f"  ✅ {name}: {path}")
+        else:
+            healthy = False
+            lines.append(f"  ❌ {name}: MISSING at {path}")
+
+    if not healthy:
+        lines.append(
+            "     → the browser cache was deleted or is out of sync. Fix with:\n"
+            f"       {sys.executable} -m patchright install chromium"
+        )
+    return healthy, lines
+
+
+def doctor_and_exit() -> None:
+    """Print environment diagnostics and exit non-zero if anything is wrong."""
+    config = get_config()
+
+    configure_logging(log_level="ERROR", json_format=False)
+
+    version = get_version()
+    profile_dir = get_profile_dir()
+    healthy = True
+
+    print(f"🩺 LinkedIn Agent MCP v{version} — diagnostics")
+    print("=" * 48)
+
+    print("\nVersions")
+    print(f"  package:    {version}")
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        print(f"  patchright: {_pkg_version('patchright')}")
+    except Exception:
+        healthy = False
+        print("  patchright: ❌ not installed")
+    print(f"  python:     {sys.version.split()[0]}")
+    print(f"  executable: {sys.executable}")
+    print(
+        f"  build:      {build_fingerprint()}  (source hash — changes when code does)"
+    )
+    print(f"  package at: {Path(__file__).resolve().parent}")
+
+    print("\nBrowser binaries")
+    binaries_ok = True
+    if config.browser.chrome_path:
+        print(f"  using custom chrome_path: {config.browser.chrome_path}")
+    else:
+        binaries_ok, lines = _diagnose_browser_binaries(config.browser.headless)
+        healthy = healthy and binaries_ok
+        for line in lines:
+            print(line)
+
+    print("\nProfile")
+    print(f"  path: {profile_dir}")
+    if not profile_exists(profile_dir):
+        healthy = False
+        print("  ❌ no profile found — run with --login")
+    else:
+        print("  ✅ profile present")
+        holder = profile_lock_holder(profile_dir)
+        if holder is None:
+            print("  ✅ no competing process holds the profile")
+        else:
+            healthy = False
+            print(
+                f"  ❌ profile is locked by PID {holder} — another LinkedIn MCP "
+                "instance is running.\n"
+                "     → close it, or run this instance with --user-data-dir <copy>"
+            )
+
+    print("\nSession")
+    if not binaries_ok:
+        # Launching a browser here would call ensure_browser_binary(), which
+        # downloads ~520MB. A diagnostic must report state, never change it —
+        # and a doctor that silently repairs the fault it is describing cannot
+        # be used to verify that the fault is detected.
+        print("  ⏭  skipped — browser binaries missing (would trigger a download)")
+    elif not profile_exists(profile_dir):
+        print("  ⏭  skipped (no profile)")
+    else:
+
+        async def _check() -> bool:
+            try:
+                set_headless(True)
+                browser = await get_or_create_browser()
+                return await is_logged_in(browser.page)
+            finally:
+                await close_browser()
+
+        try:
+            if asyncio.run(_check()):
+                print("  ✅ session is valid")
+            else:
+                healthy = False
+                print("  ❌ session expired — run with --login")
+        except Exception as exc:
+            healthy = False
+            print(f"  ❌ could not validate session: {exc}")
+
+    print("\n" + "=" * 48)
+    print("✅ All checks passed" if healthy else "❌ Problems found (see above)")
+    sys.exit(0 if healthy else 1)
+
+
 def ensure_authentication_ready() -> None:
     """
     Phase 1: Ensure authentication is ready.
@@ -258,6 +420,10 @@ def main() -> None:
     # Handle --login flag
     if config.server.login:
         get_profile_and_exit()
+
+    # Handle --doctor flag
+    if config.server.doctor:
+        doctor_and_exit()
 
     # Handle --status flag
     if config.server.status:

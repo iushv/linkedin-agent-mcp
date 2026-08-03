@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "linkedin-mcp-server",
   "display_name": "LinkedIn Agent MCP",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Connect Claude to LinkedIn for automation, outreach, profiles, companies, jobs, and analytics",
   "long_description": "# LinkedIn Agent MCP\n\nConnect Claude to your LinkedIn account. Access profiles, companies, job postings, people search, saved jobs, and profile automation through a Docker container on your machine.\n\n## Features\n- **Profile Access**: Get detailed LinkedIn profile information including work history, education, and skills\n- **Company Profiles**: Extract comprehensive company information and details\n- **Job Details**: Retrieve job posting information from LinkedIn URLs\n- **Job Search**: Search for jobs and people with structured outputs and pagination\n- **Automation**: Manage saved jobs and profile job-search settings\n\n## First-Time Setup\n\n### 1. Pre-pull Docker Image (Required)\nRun this command first to avoid connection timeouts:\n```\ndocker pull iushv/linkedin-agent-mcp:4.0.0",
   "author": {
@@ -25,6 +25,7 @@
         "run", "--rm", "-i",
         "-v", "${HOME}/.linkedin-mcp:/home/pwuser/.linkedin-mcp",
         "-e", "LOG_LEVEL=DEBUG",
+        "-e", "TIMEOUT=60000",
         "iushv/linkedin-agent-mcp:4.0.0"
       ]
     }
@@ -45,6 +46,18 @@
     {
       "name": "search_jobs",
       "description": "Search for jobs with filters like keywords and location"
+    },
+    {
+      "name": "react_to_post",
+      "description": "React to a LinkedIn post using one of: like, celebrate, support, insightful, love, or funny"
+    },
+    {
+      "name": "get_post_reactions",
+      "description": "List people who reacted to a LinkedIn post, including their reaction type and profile URL"
+    },
+    {
+      "name": "get_post_commenters",
+      "description": "List top-level commenters on a LinkedIn post with comment text and profile URLs"
     },
     {
       "name": "close_session",

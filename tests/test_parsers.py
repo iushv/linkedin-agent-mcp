@@ -7,16 +7,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # ── feed.py parsers ──
-from linkedin_mcp_server.tools.feed import (
+from linkedin_mcp_server.tools.extraction.activity_text import (
     _build_activity_post_analytics_item,
     _build_post_analytics_item,
     _extract_metric,
     _extract_post_from_text,
-    _extract_post_url,
     _extract_time_ago,
     _looks_like_analytics_card_text,
-    _normalize_post_url,
     _parse_posts_from_activity_text,
+)
+from linkedin_mcp_server.tools.extraction.post_identity import (
+    _extract_post_identifier,
+    _extract_post_url,
+    _is_engagement_actionable_identifier,
+    _normalize_post_url,
 )
 
 # ── job.py parsers ──
@@ -30,6 +34,9 @@ from linkedin_mcp_server.tools.job import (
     _parse_job_card_text,
     _parse_job_search_results_text,
 )
+
+# ── company.py parsers ──
+from linkedin_mcp_server.tools.company import _extract_company_post_url
 
 # ── messaging.py parsers ──
 from linkedin_mcp_server.tools.messaging import (
@@ -200,6 +207,25 @@ class TestNormalizePostUrl:
         assert _normalize_post_url("/messaging/thread/123/") is None
 
 
+class TestEngagementActionableIdentifier:
+    def test_post_urn_is_actionable(self):
+        assert _is_engagement_actionable_identifier(
+            url=None, post_urn="urn:li:activity:123"
+        )
+
+    def test_feed_update_url_is_actionable(self):
+        assert _is_engagement_actionable_identifier(
+            url="https://www.linkedin.com/feed/update/urn:li:activity:123/",
+            post_urn=None,
+        )
+
+    def test_company_posts_url_is_not_engagement_actionable(self):
+        assert not _is_engagement_actionable_identifier(
+            url="https://www.linkedin.com/company/example/posts/?feedView=all",
+            post_urn=None,
+        )
+
+
 class TestExtractPostUrl:
     @pytest.mark.asyncio
     async def test_skips_missing_selectors_without_get_attribute_wait(self):
@@ -226,6 +252,261 @@ class TestExtractPostUrl:
 
         assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123/"
         missing.first.get_attribute.assert_not_called()
+
+
+class TestExtractPostIdentifier:
+    @pytest.mark.asyncio
+    async def test_hydration_state_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, "", "urn:li:activity:7654321"]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "hydration",
+        }
+
+    @pytest.mark.asyncio
+    async def test_menu_button_strategy_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        menu_button = MagicMock()
+        menu_button.get_attribute = AsyncMock(
+            side_effect=["urn:li:activity:7654321", None]
+        )
+
+        menu_buttons = MagicMock()
+        menu_buttons.count = AsyncMock(return_value=1)
+        menu_buttons.nth = MagicMock(return_value=menu_button)
+
+        def _locator(selector: str):
+            if "button[aria-controls*='urn:li:activity']" in selector:
+                return menu_buttons
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "menu_button",
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_empty_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None, None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {"url": None, "post_urn": None}
+
+
+class TestExtractCompanyPostUrl:
+    @pytest.mark.asyncio
+    async def test_company_post_url_extraction_uses_identifier_helper(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(return_value="urn:li:activity:123")
+
+        result = await _extract_company_post_url(card)
+
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:123"
+
+    @pytest.mark.asyncio
+    async def test_company_post_url_preserves_existing_anchor(self):
+        card = MagicMock()
+
+        present = MagicMock()
+        present.count = AsyncMock(return_value=1)
+        present.first = MagicMock()
+        present.first.get_attribute = AsyncMock(
+            return_value="/feed/update/urn:li:activity:456/"
+        )
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        def _locator(selector: str):
+            return present if selector == "a[href*='/feed/update/']" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+
+        result = await _extract_company_post_url(card)
+
+        assert result == "https://www.linkedin.com/feed/update/urn:li:activity:456/"
+
+    @pytest.mark.asyncio
+    async def test_outer_html_unique_urn_returns_identifier(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, '<div data-any="urn:li:activity:7654321"></div>']
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:7654321",
+            "post_urn": "urn:li:activity:7654321",
+            "strategy": "outer_html",
+        }
+
+    @pytest.mark.asyncio
+    async def test_outer_html_multiple_urns_falls_through(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        broad_links = MagicMock()
+        broad_links.count = AsyncMock(return_value=1)
+        broad_link = MagicMock()
+        broad_link.get_attribute = AsyncMock(
+            return_value="/feed/update/urn:li:activity:999/"
+        )
+        broad_links.nth = MagicMock(return_value=broad_link)
+
+        def _locator(selector: str):
+            return broad_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(
+            side_effect=[
+                None,
+                None,
+                ("<div>urn:li:activity:111</div><div>urn:li:activity:222</div>"),
+            ]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+            "post_urn": "urn:li:activity:999",
+            "strategy": "broad_anchor",
+        }
+
+    @pytest.mark.asyncio
+    async def test_hydration_state_picks_most_frequent(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        # The browser-context JS performs the frequency tiebreak; this test
+        # validates that the chosen URN is propagated correctly in Python.
+        card.evaluate = AsyncMock(
+            side_effect=[None, None, "", "urn:li:activity:3333333"]
+        )
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:3333333",
+            "post_urn": "urn:li:activity:3333333",
+            "strategy": "hydration",
+        }
+
+    @pytest.mark.asyncio
+    async def test_hydration_state_ties_return_null(self):
+        card = MagicMock()
+
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing.first = MagicMock()
+        missing.first.get_attribute = AsyncMock()
+
+        empty_links = MagicMock()
+        empty_links.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str):
+            return empty_links if selector == "a[href]" else missing
+
+        card.locator = MagicMock(side_effect=_locator)
+        card.evaluate = AsyncMock(side_effect=[None, None, "", None])
+
+        result = await _extract_post_identifier(card)
+
+        assert result == {"url": None, "post_urn": None}
 
 
 class TestLooksLikeAnalyticsCardText:
@@ -571,11 +852,270 @@ class TestExtractNameHeadline:
         assert headline == "Software Engineer at Acme"
 
     def test_one_line(self):
+        # None rather than "": absent is distinguishable from empty, matching
+        # the rule applied elsewhere that a field reports evidence or nothing.
         name, headline = _extract_name_headline("Bob\n")
         assert name == "Bob"
-        assert headline == ""
+        assert headline is None
 
     def test_empty(self):
         name, headline = _extract_name_headline("")
         assert name == ""
-        assert headline == ""
+        assert headline is None
+
+
+# ---------------------------------------------------------------------------
+# company._parse_company_post_text — author recovery
+# ---------------------------------------------------------------------------
+
+
+class TestCompanyPostAuthor:
+    """The 2025 company feed puts the author between the card header and the
+    follower count; reshares put a different name there than the page owner."""
+
+    def test_extracts_author_above_follower_count(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 1\n"
+            "LlamaIndex\n"
+            "287,388 followers\n"
+            "Contact us\n"
+            "4d •\n"
+            "Your agents deserve better retrieval\n"
+            "42 reactions\n"
+            "7 comments"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "LlamaIndex"
+        assert parsed["reactions"] == 42
+        assert parsed["comments"] == 7
+
+    def test_falls_back_to_line_after_header(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 3\n"
+            "Weaviate\n"
+            "Some post body that is long enough to be a real post body here\n"
+            "1d •"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "Weaviate"
+
+    def test_reshare_author_differs_from_page_owner(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = (
+            "Feed post number 2\n"
+            "Jerry Liu\n"
+            "12,004 followers\n"
+            "2d •\n"
+            "Reshared thoughts on retrieval pipelines and evaluation"
+        )
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] == "Jerry Liu"
+
+    def test_missing_author_returns_none_not_header(self):
+        from linkedin_mcp_server.tools.company import _parse_company_post_text
+
+        text = "Some stray card text with no recognisable author structure at all"
+        parsed = _parse_company_post_text(text)
+
+        assert parsed["author"] is None
+
+
+class TestLandedUrlMatchesSlug:
+    """Guards against silently returning another company's posts."""
+
+    def test_exact_match(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug(
+            "https://www.linkedin.com/company/llamaindex/posts/", "llamaindex"
+        )
+
+    def test_punctuation_variant_is_not_a_mismatch(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug(
+            "https://www.linkedin.com/company/llama-index/posts/", "llamaindex"
+        )
+
+    def test_different_company_is_a_mismatch(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert not _landed_url_matches_slug(
+            "https://www.linkedin.com/company/weaviate/posts/", "llamaindex"
+        )
+
+    def test_non_company_url_does_not_cry_wolf(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug("https://www.linkedin.com/feed/", "llamaindex")
+
+    def test_empty_inputs_are_tolerated(self):
+        from linkedin_mcp_server.tools.company import _landed_url_matches_slug
+
+        assert _landed_url_matches_slug("", "llamaindex")
+        assert _landed_url_matches_slug("https://x/company/a/", "")
+
+
+# ---------------------------------------------------------------------------
+# network.py — invitation card parsing
+# ---------------------------------------------------------------------------
+
+
+class TestMutualConnections:
+    """Fixtures are real strings scraped from the invitation manager.
+
+    The previous pattern required a digit immediately before "mutual" and
+    matched none of these, which is why every invitation returned null.
+    """
+
+    @pytest.mark.parametrize(
+        "card_text,expected",
+        [
+            ("Rohit Sharma is a mutual connection", 1),
+            ("Beemireddy Chinna Obula Reddy is a mutual connection", 1),
+            ("Harsh Vij and 2 other mutual connections", 3),
+            ("ZMI and 5 other mutual connections", 6),
+            ("Prikshit Singh and 6 other mutual connections", 7),
+            ("vivek gupta and 41 other mutual connections", 42),
+        ],
+    )
+    def test_real_linkedin_phrasings(self, card_text, expected):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections(card_text) == expected
+
+    def test_bare_count_still_supported(self):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections("3 mutual connections") == 3
+
+    def test_no_mutual_text_returns_none(self):
+        from linkedin_mcp_server.tools.network import _extract_mutual_connections
+
+        assert _extract_mutual_connections("Jayam Gupta\nAgent harnesses") is None
+
+    def test_old_pattern_would_have_missed_these(self):
+        """Pins the regression: the previous regex matched zero real cards."""
+        import re
+
+        old = re.compile(r"([\d,.kKmM]+)\s+mutual", re.IGNORECASE)
+        for text in (
+            "Rohit Sharma is a mutual connection",
+            "Harsh Vij and 2 other mutual connections",
+            "vivek gupta and 41 other mutual connections",
+        ):
+            assert old.search(text) is None
+
+
+class TestInvitationNameHeadline:
+    def test_duplicated_name_is_not_returned_as_headline(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(
+                [
+                    "Jayam Gupta",
+                    "Jayam Gupta",
+                    "Building agent harnesses at scale",
+                    "Harsh Vij and 2 other mutual connections",
+                    "Accept",
+                ]
+            )
+        )
+
+        assert name == "Jayam Gupta"
+        assert headline == "Building agent harnesses at scale"
+
+    def test_skips_degree_and_action_noise(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(["Devansh Singh", "• 2nd", "Ignore", "LangGraph + FAISS RAG"])
+        )
+
+        assert name == "Devansh Singh"
+        assert headline == "LangGraph + FAISS RAG"
+
+    def test_returns_none_when_nothing_descriptive(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        name, headline = _extract_name_headline(
+            "\n".join(["Anon Person", "Anon Person", "Accept", "Ignore"])
+        )
+
+        assert name == "Anon Person"
+        assert headline is None
+
+    def test_empty_text(self):
+        from linkedin_mcp_server.tools.network import _extract_name_headline
+
+        assert _extract_name_headline("") == ("", None)
+
+
+class TestNotConnectableDetection:
+    """Follow-only profiles must fail as 'not connectable', not as a selector bug.
+
+    Gaurav Kumar Rai exposed only Message/Follow. The flow walked its whole
+    fallback chain and raised a selector error, which is indistinguishable from
+    a broken selector and invites retries that can never succeed.
+    """
+
+    def _page(self, *, connect=0, invite=0, pending=0, follow=0):
+        from unittest.mock import AsyncMock, MagicMock
+
+        page = MagicMock()
+
+        def by_role(role, name=None, **kw):
+            loc = MagicMock()
+            counts = {"Connect": connect, "Pending": pending, "Follow": follow}
+            loc.count = AsyncMock(return_value=counts.get(name, 0))
+            return loc
+
+        page.get_by_role = MagicMock(side_effect=by_role)
+        invite_loc = MagicMock()
+        invite_loc.count = AsyncMock(return_value=invite)
+        page.locator = MagicMock(return_value=invite_loc)
+        return page
+
+    @pytest.mark.asyncio
+    async def test_follow_only_profile_is_rejected(self):
+        from linkedin_mcp_server.core.exceptions import InteractionError
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        with pytest.raises(InteractionError, match="Follow-only"):
+            await _reject_if_not_connectable(self._page(follow=1), "https://x/in/a/")
+
+    @pytest.mark.asyncio
+    async def test_pending_invitation_is_rejected(self):
+        from linkedin_mcp_server.core.exceptions import InteractionError
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        with pytest.raises(InteractionError, match="already pending"):
+            await _reject_if_not_connectable(self._page(pending=1), "https://x/in/a/")
+
+    @pytest.mark.asyncio
+    async def test_connectable_profile_passes_through(self):
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(connect=1, follow=1), "https://x/")
+
+    @pytest.mark.asyncio
+    async def test_invite_aria_label_counts_as_connectable(self):
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(invite=1, follow=1), "https://x/")
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_page_does_not_block_the_send(self):
+        """No Connect and no Follow: cannot tell, so let the normal flow try."""
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(), "https://x/in/a/")

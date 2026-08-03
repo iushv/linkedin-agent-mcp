@@ -18,7 +18,7 @@ from linkedin_mcp_server.core.pagination import (
     build_paginated_response,
     decode_cursor,
 )
-from linkedin_mcp_server.core.resolver import (
+from linkedin_mcp_server.resolver import (
     ResolvedCompany,
     ResolvedGeo,
     resolve_company,
@@ -39,6 +39,12 @@ _LOCATION_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _CONNECTION_DEGREE_RE = re.compile(r"\b(1st|2nd|3rd)\b", re.IGNORECASE)
+# A line carrying nothing but the connection degree, e.g. "• 2nd",
+# "2nd degree connection", "3rd+".
+_DEGREE_ONLY_RE = re.compile(
+    r"^[•·\s]*(1st|2nd|3rd\+?)(\s*degree)?(\s*connections?)?[•·\s]*$",
+    re.IGNORECASE,
+)
 _SHARED_CONNECTIONS_RE = re.compile(
     r"(\d+)\s+shared connections?",
     re.IGNORECASE,
@@ -212,9 +218,30 @@ def _parse_person_card_text(
     explicit_past_companies: list[str] = []
     remaining = lines[1:]
 
-    if remaining and not _CONNECTION_DEGREE_RE.search(remaining[0]):
-        headline = remaining[0]
-        remaining = remaining[1:]
+    # LinkedIn's 2025 people cards can put the connection degree on its own
+    # line straight after the name ("• 2nd"). The previous check bailed out of
+    # headline detection whenever that happened, so the headline fell through
+    # to the location heuristic below -- and any headline containing a comma
+    # ("AI Engineer @ Google, ex-Amazon") was stored as the location while
+    # headline stayed null. Pull degree-only lines out first, then take the
+    # headline by position: on every observed layout the headline precedes the
+    # location, which is a stronger signal than punctuation.
+    degree_lines = [
+        line for line in remaining if _DEGREE_ONLY_RE.fullmatch(line.strip())
+    ]
+    remaining = [
+        line for line in remaining if not _DEGREE_ONLY_RE.fullmatch(line.strip())
+    ]
+
+    if remaining:
+        candidate = remaining[0]
+        # With more lines to follow, the first is the headline. If it is the
+        # only line left and reads like a place, treat it as the location.
+        if len(remaining) > 1 or not _looks_like_location(candidate):
+            headline = candidate
+            remaining = remaining[1:]
+
+    remaining = [*degree_lines, *remaining]
 
     for line in remaining:
         current_value = _extract_prefixed_company(line, "Current")
@@ -236,11 +263,22 @@ def _parse_person_card_text(
         if location is None and _looks_like_location(line):
             location = line
 
-    current_company = (
-        explicit_current_company
-        or _extract_current_company(headline)
-        or default_current_company
-    )
+    # Only report an employer the card actually evidences. Falling back to the
+    # requested filter unconditionally echoed the query back as if it were
+    # parsed data: a search for "Uber Technologies" returned
+    # current_company="Uber Technologies" for someone whose headline read
+    # "Software Engineer @ Apple" -- and did so even when the filter had been
+    # dropped entirely. That made the field useless for verification, because
+    # checking it against the query was circular by construction.
+    # past_companies below has always required this evidence; current_company
+    # now matches it.
+    current_company = explicit_current_company or _extract_current_company(headline)
+    if (
+        current_company is None
+        and default_current_company
+        and default_current_company.lower() in text.lower()
+    ):
+        current_company = default_current_company
     past_companies = explicit_past_companies or None
     if (
         default_past_company

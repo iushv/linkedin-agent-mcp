@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import linkedin_mcp_server.core.resolver as resolver
+import linkedin_mcp_server.resolver as resolver
 
 
 @pytest.fixture(autouse=True)
@@ -261,3 +261,45 @@ class TestBatchResolution:
 
         assert result["Mastercard"] is not None
         assert result["EXL"] is None
+
+
+class TestCompanyCandidateMatching:
+    """Guards against silently resolving to the wrong company.
+
+    Substring matching accepted "uber" → "ubercreativedigitalagency" (a UK
+    creative agency) and reported that ID as a successfully applied filter.
+    """
+
+    def test_rejects_substring_inside_a_longer_word(self):
+        assert not resolver._company_candidate_matches(
+            "Uber", "ubercreativedigitalagency", "Uber Creative Digital Agency"
+        )
+
+    def test_accepts_the_real_company_slug(self):
+        assert resolver._company_candidate_matches("Uber", "uber-com", "Uber")
+
+    def test_accepts_exact_name(self):
+        assert resolver._company_candidate_matches("Google", "google", "Google")
+
+    def test_rejects_qualified_regional_entity_deliberately(self):
+        """A conscious trade-off, not an oversight.
+
+        "Deloitte" -> "Deloitte India" is structurally identical to
+        "Uber" -> "Uber Creative Digital Agency": the query is a whole token of
+        a longer name. No heuristic separates the wanted case from the harmful
+        one, so both resolve to nothing and the caller warns and drops the
+        filter rather than silently targeting the wrong company.
+        """
+        assert not resolver._company_candidate_matches(
+            "Deloitte", "deloitte-india", "Deloitte India"
+        )
+
+    def test_rejects_when_query_is_more_specific_than_candidate(self):
+        # "Uber Technologies" vs a candidate merely named "Uber" is not a
+        # confident match; the caller's warn-and-drop path is the safe answer.
+        assert not resolver._company_candidate_matches(
+            "Uber Technologies", "uber-com", "Uber"
+        )
+
+    def test_empty_query_never_matches(self):
+        assert not resolver._company_candidate_matches("", "uber-com", "Uber")

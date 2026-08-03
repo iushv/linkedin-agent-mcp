@@ -166,3 +166,191 @@ def test_main_non_interactive_auth_failure_has_no_stdout(
     assert exit_info.value.code == 1
     captured = capsys.readouterr()
     assert captured.out == ""
+
+
+# ---------------------------------------------------------------------------
+# ensure_authentication_ready
+# ---------------------------------------------------------------------------
+
+
+def _patch_auth_dependencies(
+    monkeypatch: pytest.MonkeyPatch, config: AppConfig
+) -> None:
+    monkeypatch.setattr("linkedin_mcp_server.cli_main.get_config", lambda: config)
+
+
+def test_ensure_auth_ready_returns_when_profile_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _make_config(
+        is_interactive=False, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.get_authentication_source",
+        lambda: "profile",
+    )
+
+    cli_main.ensure_authentication_ready()
+
+
+def test_ensure_auth_ready_non_interactive_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _make_config(
+        is_interactive=False, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.get_authentication_source",
+        lambda: (_ for _ in ()).throw(CredentialsNotFoundError("none")),
+    )
+
+    with pytest.raises(CredentialsNotFoundError, match="--login"):
+        cli_main.ensure_authentication_ready()
+
+
+def test_ensure_auth_ready_interactive_setup_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _make_config(
+        is_interactive=True, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.get_authentication_source",
+        lambda: (_ for _ in ()).throw(CredentialsNotFoundError("none")),
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.run_interactive_setup", lambda: True
+    )
+
+    cli_main.ensure_authentication_ready()
+
+
+def test_ensure_auth_ready_interactive_setup_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _make_config(
+        is_interactive=True, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.get_authentication_source",
+        lambda: (_ for _ in ()).throw(CredentialsNotFoundError("none")),
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.run_interactive_setup", lambda: False
+    )
+
+    with pytest.raises(CredentialsNotFoundError, match="cancelled"):
+        cli_main.ensure_authentication_ready()
+
+
+# ---------------------------------------------------------------------------
+# profile maintenance exit flows
+# ---------------------------------------------------------------------------
+
+
+def test_clear_profile_exits_zero_when_no_profile(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = _make_config(
+        is_interactive=True, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.configure_logging", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.profile_exists", lambda _dir: False
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_main.clear_profile_and_exit()
+
+    assert exit_info.value.code == 0
+    assert "No browser profile found" in capsys.readouterr().out
+
+
+def test_clear_profile_aborts_without_confirmation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = _make_config(
+        is_interactive=True, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.configure_logging", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.profile_exists", lambda _dir: True
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+    clear_calls: list[object] = []
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.clear_profile",
+        lambda _dir: clear_calls.append(_dir) or True,
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_main.clear_profile_and_exit()
+
+    assert exit_info.value.code == 0
+    assert not clear_calls
+    assert "cancelled" in capsys.readouterr().out
+
+
+def test_get_profile_and_exit_propagates_setup_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _make_config(
+        is_interactive=True, transport="stdio", transport_explicitly_set=False
+    )
+    _patch_auth_dependencies(monkeypatch, config)
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.configure_logging", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.run_profile_creation", lambda _dir: False
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_main.get_profile_and_exit()
+
+    assert exit_info.value.code == 1
+
+
+def test_choose_transport_interactive_returns_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.inquirer.prompt",
+        lambda _questions: {"transport": "streamable-http"},
+    )
+
+    assert cli_main.choose_transport_interactive() == "streamable-http"
+
+
+def test_choose_transport_interactive_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "linkedin_mcp_server.cli_main.inquirer.prompt", lambda _questions: None
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        cli_main.choose_transport_interactive()
+
+
+def test_get_version_falls_back_to_pyproject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_not_found(package_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(package_name)
+
+    monkeypatch.setattr(importlib.metadata, "version", raise_not_found)
+
+    version = cli_main.get_version()
+
+    assert version == "unknown" or version[0].isdigit()

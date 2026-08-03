@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,15 +26,27 @@ READ_TOOL_NAMES = {
     "get_company_posts",
     "get_job_details",
     "search_jobs",
+    "search_people",
+    "get_company_people",
+    "get_saved_jobs",
+    "get_job_recommendations",
     "browse_feed",
     "get_conversations",
     "read_conversation",
     "get_pending_invitations",
+    "get_engagement_health",
     "get_profile_analytics",
     "get_my_post_analytics",
+    "get_post_reactions",
+    "get_post_commenters",
 }
 
 WRITE_TOOL_NAMES = {
+    "save_job",
+    "update_profile_headline",
+    "set_open_to_work",
+    "add_profile_skills",
+    "set_featured_skills",
     "create_post",
     "create_poll",
     "delete_post",
@@ -101,6 +114,17 @@ def parse_args() -> argparse.Namespace:
         help="Company slug for company tools.",
     )
     parser.add_argument(
+        "--filter-company",
+        default="Uber",
+        help="Company used to verify search_people applies its current_company filter.",
+    )
+    parser.add_argument(
+        "--filter-keywords",
+        default="engineer",
+        help="Broad keyword for the search_people filter check (narrow terms return "
+        "zero rows, which cannot verify the filter).",
+    )
+    parser.add_argument(
         "--job-id",
         default="4252026496",
         help="LinkedIn job id for get_job_details.",
@@ -138,6 +162,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Limit for get_pending_invitations.",
+    )
+    parser.add_argument(
+        "--list-limit",
+        type=int,
+        default=5,
+        help="Limit for paginated list-style tools.",
     )
     parser.add_argument(
         "--write-profile-url",
@@ -276,6 +306,145 @@ def classify_result(result: Any, expect: str) -> tuple[str, str]:
     return "PASS", short_detail(payload)
 
 
+# Tools whose primary collection must never come back empty, and the reason.
+# An assertion that passes on zero rows is worse than no assertion, because it
+# reports confidence -- so emptiness here is a failure, not a skip.
+_MUST_NOT_BE_EMPTY: dict[str, tuple[str, str]] = {
+    "browse_feed": ("posts", "the logged-in feed always has content"),
+    "get_person_profile": ("sections", "a profile page always has sections"),
+    # get_company_posts is checked in detail below (slug, urls, authors).
+}
+
+# Deliberately exempt: these can be legitimately empty, so asserting non-empty
+# would produce false alarms. Documented so the exemption reads as a decision
+# rather than an oversight.
+_MAY_BE_EMPTY: dict[str, str] = {
+    "get_pending_invitations": "you may genuinely have no pending invitations",
+    "get_conversations": "the inbox may genuinely be empty",
+    "get_my_post_analytics": "there may be no recent posts in the window",
+    "get_engagement_health": "returns scalar health fields, not a collection",
+    "send_connection_request": "dry_run returns a preview, not data",
+}
+
+
+def content_violations(case: "ToolCase", result: Any) -> list[str]:
+    """Assert returned data actually matches what was asked for.
+
+    A tool can return status=success while handing back another company's
+    posts or ignoring a filter. Status-only checks cannot see that, so these
+    assertions look at the payload itself. Returns human-readable violations;
+    empty list means the content is consistent with the request.
+    """
+    data = unwrap_data(result)
+    if not isinstance(data, dict):
+        return []
+
+    violations: list[str] = []
+
+    def _texts(items: Any, *keys: str) -> list[str]:
+        out: list[str] = []
+        if not isinstance(items, list):
+            return out
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in keys:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    out.append(value.lower())
+        return out
+
+    def _slug_tokens(value: str) -> set[str]:
+        return {tok for tok in re.split(r"[^a-z0-9]+", value.lower()) if len(tok) > 2}
+
+    expectation = _MUST_NOT_BE_EMPTY.get(case.name)
+    if expectation:
+        key, reason = expectation
+        value = data.get(key)
+        if not value:
+            violations.append(f"empty '{key}' — {reason} (empty result is not a pass)")
+
+    if case.name == "get_company_posts":
+        requested = str(case.args.get("company_name", ""))
+        posts = data.get("posts")
+        tokens = _slug_tokens(requested)
+        if not isinstance(posts, list) or not posts:
+            # An empty result for a major company is a silent extraction
+            # failure, not a pass. Never let emptiness skip the checks below.
+            violations.append(
+                f"no posts returned for '{requested}' (empty result is not a pass)"
+            )
+        else:
+            haystack = " ".join(
+                _texts(posts, "author", "company", "text", "text_preview")
+                + [
+                    str(data.get("url", "")).lower(),
+                    str(data.get("resolved_name", "")).lower(),
+                ]
+            )
+            if tokens and not any(tok in haystack for tok in tokens):
+                violations.append(
+                    f"slug mismatch: asked for '{requested}' but no post/author/url mentions it "
+                    "(possible cross-company session leak)"
+                )
+            missing_urls = sum(
+                1 for p in posts if isinstance(p, dict) and not p.get("url")
+            )
+            if missing_urls == len(posts):
+                violations.append(f"all {len(posts)} posts have url=null")
+            missing_authors = sum(
+                1 for p in posts if isinstance(p, dict) and not p.get("author")
+            )
+            if missing_authors == len(posts):
+                violations.append(f"all {len(posts)} posts have author=null")
+
+    if case.name == "search_people":
+        company = case.args.get("current_company")
+        results = data.get("results")
+        if company:
+            if not isinstance(results, list) or not results:
+                violations.append(
+                    f"no results for current_company='{company}' — cannot verify the "
+                    "filter is applied (empty result is not a pass)"
+                )
+            else:
+                tokens = _slug_tokens(str(company))
+                # Deliberately excludes current_company: that field used to
+                # echo the requested filter back, so accepting it as evidence
+                # made this assertion circular — it matched the query even when
+                # every result worked somewhere else. Only fields parsed from
+                # the card itself can adjudicate the filter.
+                per_person = [
+                    " ".join(
+                        v
+                        for k, v in item.items()
+                        if isinstance(v, str) and k in {"headline", "subtitle"}
+                    )
+                    .strip()
+                    .lower()
+                    for item in results
+                    if isinstance(item, dict)
+                ]
+                verifiable = [h for h in per_person if h]
+                if not verifiable:
+                    # Distinct from "filter ignored": the fields that would
+                    # prove affiliation came back blank, so nobody — canary or
+                    # human — can tell whether these people work there.
+                    violations.append(
+                        f"unverifiable: {len(per_person)} results returned for "
+                        f"current_company='{company}' but all headline/company fields are empty"
+                    )
+                elif tokens and not any(
+                    any(tok in h for tok in tokens) for h in verifiable
+                ):
+                    violations.append(
+                        f"filter ignored: current_company='{company}' but 0/{len(verifiable)} "
+                        "results with a readable headline mention it"
+                    )
+
+    return violations
+
+
 def unwrap_data(result: Any) -> dict[str, Any]:
     payload = normalize_result(result)
     if isinstance(payload, dict) and payload.get("status") == "success":
@@ -359,6 +528,11 @@ async def invoke_case(
             )
 
         status, detail = classify_result(result, case.expect)
+        if status == "PASS":
+            violations = content_violations(case, result)
+            if violations:
+                status = "FAIL"
+                detail = f"{detail} | CONTENT: " + "; ".join(violations)
         return (
             ToolOutcome(
                 case.name,
@@ -413,6 +587,42 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
             {"keywords": args.job_keywords, "location": args.job_location},
             "read",
         ),
+        ToolCase(
+            "search_people",
+            {
+                "keywords": args.job_keywords,
+                "location": args.job_location,
+                "match_mode": "broad",
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        # Separate case with an explicit company filter: content_violations()
+        # asserts the filter is actually applied, which the broad case above
+        # cannot check. Deliberately uses a broad keyword — a narrow one
+        # returns zero rows, and an empty result set proves nothing about
+        # whether the filter works.
+        ToolCase(
+            "search_people",
+            {
+                "keywords": args.filter_keywords,
+                "current_company": args.filter_company,
+                "match_mode": "strict",
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        ToolCase(
+            "get_company_people",
+            {
+                "company_name": args.company_name,
+                "title_keyword": args.job_keywords.split()[0],
+                "limit": args.list_limit,
+            },
+            "read",
+        ),
+        ToolCase("get_saved_jobs", {"limit": args.list_limit}, "read"),
+        ToolCase("get_job_recommendations", {"limit": args.list_limit}, "read"),
         ToolCase("browse_feed", {"count": args.feed_count}, "read"),
         ToolCase(
             "get_conversations",
@@ -424,10 +634,21 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
             {"limit": args.invitation_limit},
             "read",
         ),
+        ToolCase("get_engagement_health", {}, "read"),
         ToolCase("get_profile_analytics", {}, "read"),
         ToolCase(
             "get_my_post_analytics",
             {"limit": args.analytics_limit},
+            "read",
+        ),
+        ToolCase(
+            "get_post_reactions",
+            {"post_url": args.post_url, "limit": args.list_limit},
+            "read",
+        ),
+        ToolCase(
+            "get_post_commenters",
+            {"post_url": args.post_url, "limit": args.list_limit},
             "read",
         ),
     ]
@@ -435,6 +656,55 @@ def build_read_cases(args: argparse.Namespace) -> list[ToolCase]:
 
 def build_write_cases(args: argparse.Namespace) -> list[ToolCase]:
     return [
+        ToolCase(
+            "save_job",
+            {
+                "job_url": f"https://www.linkedin.com/jobs/view/{args.job_id}/",
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "update_profile_headline",
+            {
+                "headline": "Live smoke dry-run headline validation",
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "set_open_to_work",
+            {
+                "enabled": True,
+                "visibility": "recruiters_only",
+                "job_titles": ["Python Developer"],
+                "job_types": ["full_time"],
+                "locations": [args.job_location],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "add_profile_skills",
+            {
+                "skills": ["Python", "Automation"],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
+        ToolCase(
+            "set_featured_skills",
+            {
+                "featured_skills": ["Python", "Automation"],
+                "confirm": True,
+                "dry_run": True,
+            },
+            "dry_run",
+        ),
         ToolCase(
             "create_post",
             {

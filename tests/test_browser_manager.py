@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -41,6 +43,42 @@ class TestExportCookies:
         cookies = json.loads(cookie_path.read_text())
         assert len(cookies) == 1
         assert cookies[0]["name"] == "li_at"
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+    async def test_export_sets_owner_only_permissions(self, tmp_path):
+        bm = BrowserManager(user_data_dir=tmp_path / "profile")
+        bm._context = MagicMock()
+        bm._context.cookies = AsyncMock(
+            return_value=[
+                {"name": "li_at", "domain": ".linkedin.com", "value": "abc"},
+            ]
+        )
+
+        cookie_path = tmp_path / "cookies.json"
+        result = await bm.export_cookies(cookie_path)
+
+        assert result is True
+        assert cookie_path.stat().st_mode & 0o777 == 0o600
+        assert not cookie_path.with_name("cookies.json.tmp").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+    async def test_export_overwrites_loose_permissions(self, tmp_path):
+        cookie_path = tmp_path / "cookies.json"
+        cookie_path.write_text("[]")
+        os.chmod(cookie_path, 0o644)
+
+        bm = BrowserManager(user_data_dir=tmp_path / "profile")
+        bm._context = MagicMock()
+        bm._context.cookies = AsyncMock(
+            return_value=[
+                {"name": "li_at", "domain": ".linkedin.com", "value": "abc"},
+            ]
+        )
+
+        assert await bm.export_cookies(cookie_path) is True
+        assert cookie_path.stat().st_mode & 0o777 == 0o600
 
 
 class TestImportCookies:
@@ -98,3 +136,20 @@ class TestImportCookies:
 
         result = await bm.import_cookies(cookie_path)
         assert result is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+    async def test_import_tightens_loose_permissions(self, tmp_path):
+        cookie_path = tmp_path / "cookies.json"
+        cookie_path.write_text(
+            json.dumps([{"name": "li_at", "value": "a", "domain": ".linkedin.com"}])
+        )
+        os.chmod(cookie_path, 0o644)
+
+        bm = BrowserManager(user_data_dir=tmp_path / "profile")
+        bm._context = MagicMock()
+        bm._context.clear_cookies = AsyncMock()
+        bm._context.add_cookies = AsyncMock()
+
+        assert await bm.import_cookies(cookie_path) is True
+        assert cookie_path.stat().st_mode & 0o777 == 0o600

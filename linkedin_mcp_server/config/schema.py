@@ -23,7 +23,7 @@ class BrowserConfig:
     user_agent: str | None = None  # Custom browser user agent
     viewport_width: int = 1280
     viewport_height: int = 720
-    default_timeout: int = 5000  # Milliseconds for page operations
+    default_timeout: int = 30000  # Milliseconds for page operations
     chrome_path: str | None = None  # Path to Chrome/Chromium executable
     user_data_dir: str = "~/.linkedin-mcp/profile"  # Persistent browser profile
     randomize_viewport: bool = True  # Pick random common resolution per session
@@ -74,6 +74,7 @@ class ServerConfig:
     login: bool = False
     status: bool = False  # Check session validity and exit
     logout: bool = False
+    doctor: bool = False  # Print environment diagnostics and exit
     # HTTP transport configuration
     host: str = "127.0.0.1"
     port: int = 8000

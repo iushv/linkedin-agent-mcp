@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from time import monotonic, perf_counter
+from time import perf_counter
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
-from patchright.async_api import TimeoutError as PlaywrightTimeoutError
-
-from linkedin_mcp_server.config import get_config
 from linkedin_mcp_server.core.exceptions import (
+    AuthenticationError,
     ConcurrencyError,
+    ElementNotFoundError,
     InteractionError,
+    NetworkError,
+    ProfileNotFoundError,
     QuotaExceededError,
     RateLimitError,
+    ScrapingError,
     SelectorError,
+)
+from linkedin_mcp_server.exceptions import (
+    CredentialsNotFoundError,
+    SessionExpiredError,
 )
 from linkedin_mcp_server.core.responses import (
     read_error,
@@ -34,90 +39,29 @@ from linkedin_mcp_server.core.safety import (
     audit_log,
     check_quota,
     check_session_health,
+    get_engagement_cooldown_seconds,
+    get_session_health,
+    is_engagement_degraded,
     record_security_challenge,
     record_successful_write,
     release_browser_lock,
     release_write_lock,
     require_confirmation,
 )
-from linkedin_mcp_server.core.throttle import AdaptiveThrottle
-from linkedin_mcp_server.core.timing import navigation_delay
-from linkedin_mcp_server.core.utils import backoff_with_jitter, detect_rate_limit
+from linkedin_mcp_server.core.navigation import (
+    FEED_NAVIGATION_TIMEOUT_MS as FEED_NAVIGATION_TIMEOUT_MS,
+    NAVIGATION_RETRIES as NAVIGATION_RETRIES,
+    effective_navigation_timeout_ms as effective_navigation_timeout_ms,
+    goto_and_check as goto_and_check,
+)
+from linkedin_mcp_server.core.utils import detect_rate_limit
 from linkedin_mcp_server.drivers.browser import ensure_authenticated
 
 logger = logging.getLogger(__name__)
 SLOW_TOOL_SECONDS = 20.0
-NAVIGATION_RETRIES = 2
-_last_navigation_started_at = 0.0
 
 
-async def goto_and_check(page: Any, url: str, *, timeout_ms: int | None = None) -> None:
-    """Navigate and run baseline challenge/rate-limit checks."""
-    effective_timeout_ms = timeout_ms or max(
-        get_config().browser.default_timeout, 15000
-    )
-    last_error: Exception | None = None
-
-    for attempt in range(NAVIGATION_RETRIES + 1):
-        await _respect_navigation_gap()
-        try:
-            nav_start = perf_counter()
-            await page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=effective_timeout_ms,
-            )
-            elapsed_ms = (perf_counter() - nav_start) * 1000
-            AdaptiveThrottle.get().record(elapsed_ms)
-            await detect_rate_limit(page)
-            return
-        except Exception as exc:
-            last_error = exc
-            if not _should_retry_navigation(exc) or attempt >= NAVIGATION_RETRIES:
-                raise
-
-            delay = await backoff_with_jitter(
-                attempt,
-                base_seconds=3,
-                max_seconds=20,
-            )
-            logger.warning(
-                "Retrying navigation for %s after %s (attempt %d/%d, backoff %.2fs)",
-                url,
-                type(exc).__name__,
-                attempt + 1,
-                NAVIGATION_RETRIES + 1,
-                delay,
-            )
-
-    if last_error is not None:
-        raise last_error
-
-
-async def _respect_navigation_gap() -> None:
-    global _last_navigation_started_at
-
-    gap = navigation_delay() * AdaptiveThrottle.get().get_multiplier()
-    now = monotonic()
-    elapsed = now - _last_navigation_started_at
-    if _last_navigation_started_at > 0 and elapsed < gap:
-        await asyncio.sleep(gap - elapsed)
-
-    _last_navigation_started_at = monotonic()
-
-
-def _should_retry_navigation(exc: Exception) -> bool:
-    if isinstance(exc, (PlaywrightTimeoutError, TimeoutError)):
-        return True
-    if not isinstance(exc, RateLimitError):
-        return False
-
-    message = str(exc).lower()
-    if any(token in message for token in ("captcha", "challenge", "checkpoint")):
-        return False
-
-    wait_seconds = getattr(exc, "suggested_wait_time", None)
-    return not isinstance(wait_seconds, int) or wait_seconds <= 30
+_ACTIVITY_URN_RE = re.compile(r"urn:li:activity:\d+")
 
 
 def normalize_profile_url(profile_url: str) -> str:
@@ -153,6 +97,57 @@ def normalize_profile_url(profile_url: str) -> str:
 
     slug = path.strip("/").split("/")[-1]
     return f"https://www.linkedin.com/in/{slug}/"
+
+
+def normalize_post_reference(post_url: str) -> str:
+    """Normalize LinkedIn post references to canonical feed/update URLs.
+
+    Accepted forms:
+    - full LinkedIn post URL
+    - relative LinkedIn post path
+    - raw ``urn:li:activity:<id>``
+    """
+    candidate = post_url.strip()
+    if not candidate:
+        raise ValueError("Invalid LinkedIn post URL: empty input")
+
+    urn_match = _ACTIVITY_URN_RE.fullmatch(candidate)
+    if urn_match:
+        return f"https://www.linkedin.com/feed/update/{urn_match.group(0)}"
+
+    if "://" not in candidate and candidate.startswith(
+        ("linkedin.com/", "www.linkedin.com/")
+    ):
+        candidate = f"https://{candidate}"
+    elif "://" not in candidate and candidate.startswith("/"):
+        candidate = urljoin("https://www.linkedin.com", candidate)
+    elif "://" not in candidate and candidate.startswith(
+        ("feed/update/", "posts/", "activity-")
+    ):
+        candidate = urljoin("https://www.linkedin.com/", candidate)
+    elif candidate.startswith("http://linkedin.com"):
+        candidate = candidate.replace("http://linkedin.com", "https://linkedin.com", 1)
+    elif candidate.startswith("http://www.linkedin.com"):
+        candidate = candidate.replace(
+            "http://www.linkedin.com",
+            "https://www.linkedin.com",
+            1,
+        )
+
+    decoded_candidate = unquote(candidate)
+    embedded_urn = _ACTIVITY_URN_RE.search(decoded_candidate)
+    if embedded_urn:
+        return f"https://www.linkedin.com/feed/update/{embedded_urn.group(0)}"
+
+    parsed = urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc.endswith("linkedin.com"):
+        raise ValueError(f"Invalid LinkedIn post URL: {post_url}")
+
+    path = parsed.path or ""
+    if not any(marker in path for marker in ("/feed/update/", "/posts/", "/activity-")):
+        raise ValueError(f"Invalid LinkedIn post URL: {post_url}")
+
+    return f"https://www.linkedin.com{path.rstrip('/')}/"
 
 
 def extract_profile_slug(profile_input: str) -> str:
@@ -200,6 +195,19 @@ def extract_thread_id_from_url(url: str) -> str | None:
     return match.group(1)
 
 
+async def ensure_engagement_allowed() -> None:
+    """Block engagement-like writes while the session is in cooldown."""
+    if not is_engagement_degraded():
+        return
+
+    wait_seconds = get_engagement_cooldown_seconds() or 300
+    raise RateLimitError(
+        "Session temporarily degraded for engagement actions after a recent LinkedIn challenge.",
+        suggested_wait_time=wait_seconds,
+        context={"session_health": get_session_health()},
+    )
+
+
 def error_code_from_exception(exc: Exception) -> str:
     """Map internal exceptions to stable error code strings."""
     if isinstance(exc, QuotaExceededError):
@@ -208,13 +216,67 @@ def error_code_from_exception(exc: Exception) -> str:
         return "concurrency_error"
     if isinstance(exc, RateLimitError):
         return "rate_limit"
+    if isinstance(exc, ElementNotFoundError):
+        return "element_not_found"
     if isinstance(exc, SelectorError):
         return "selector_error"
     if isinstance(exc, InteractionError):
         return "interaction_error"
+    if isinstance(exc, ProfileNotFoundError):
+        return "profile_not_found"
+    if isinstance(exc, AuthenticationError):
+        return "authentication_failed"
+    if isinstance(exc, SessionExpiredError):
+        return "session_expired"
+    if isinstance(exc, CredentialsNotFoundError):
+        return "authentication_not_found"
+    if isinstance(exc, NetworkError):
+        return "network_error"
+    if isinstance(exc, ScrapingError):
+        return "scraping_error"
     if isinstance(exc, ValueError):
         return "validation_error"
     return "unknown_error"
+
+
+_LEGACY_RESOLUTIONS: dict[str, str] = {
+    "authentication_not_found": "Run with --login to create a browser profile.",
+    "session_expired": "Run with --login to create a new browser profile.",
+    "authentication_failed": "Run with --login to re-authenticate.",
+    "rate_limit": "LinkedIn rate limit detected. Wait before trying again.",
+    "profile_not_found": "Check the profile URL is correct and the profile exists.",
+    "element_not_found": "LinkedIn page structure may have changed. Please report this issue.",
+    "selector_error": "LinkedIn UI may have changed. Check selector telemetry and update locator chains.",
+    "interaction_error": "Retry with visible browser mode to inspect UI state.",
+    "network_error": "Check your network connection and try again.",
+    "scraping_error": "Failed to extract data from LinkedIn. The page structure may have changed.",
+}
+
+
+async def run_legacy_read_tool(
+    action: str,
+    fetch_fn: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Run a read tool with the standard envelope plus legacy top-level keys.
+
+    Pre-envelope tools (person/company/job) returned their payload at the top
+    level on success and ``{error, message, resolution}`` on failure. This
+    wrapper produces the standard ``run_read_tool`` envelope and mirrors those
+    legacy keys additively so existing clients keep working for one release.
+    """
+    result = await run_read_tool(action, fetch_fn)
+
+    if result.get("status") == "success":
+        for key, value in (result.get("data") or {}).items():
+            result.setdefault(key, value)
+    else:
+        error_code = str(result.get("error_code") or "unknown_error")
+        result.setdefault("error", error_code)
+        resolution = _LEGACY_RESOLUTIONS.get(error_code)
+        if resolution:
+            result.setdefault("resolution", resolution)
+
+    return result
 
 
 def _log_tool_completion(
@@ -271,19 +333,23 @@ async def run_read_tool(
         await acquire_browser_lock(action)
         browser_lock_acquired = True
         await ensure_authenticated()
-        await check_session_health()
         payload = await fetch_fn()
-        result = read_success(action=action, data=payload)
+        warnings: list[str] | None = None
+        if "_warnings" in payload:
+            warnings = [str(item) for item in payload.pop("_warnings") or [] if item]
+        result = read_success(action=action, data=payload, warnings=warnings or None)
     except RateLimitError as exc:
         message = str(exc)
-        lowered = message.lower()
-        if "captcha" in lowered or "challenge" in lowered:
+        if _should_record_security_challenge(exc):
             await record_security_challenge()
 
         warnings: list[str] = []
         wait_seconds = getattr(exc, "suggested_wait_time", None)
         if isinstance(wait_seconds, int) and wait_seconds > 0:
             warnings.append(f"Suggested wait: {wait_seconds}s before retrying.")
+        challenge_type = getattr(exc, "challenge_type", None)
+        if challenge_type:
+            warnings.append(f"Challenge type: {challenge_type}.")
 
         result = read_error(
             action=action,
@@ -323,14 +389,15 @@ async def run_write_tool(
         browser_lock_acquired = True
         await ensure_authenticated()
         await check_session_health()
-        await require_confirmation(action, confirm)
-
-        await acquire_write_lock(action)
-        lock_acquired = True
 
         if dry_run:
             result = write_dry_run(action, description)
             return result
+
+        await require_confirmation(action, confirm)
+
+        await acquire_write_lock(action)
+        lock_acquired = True
 
         await check_quota(action)
 
@@ -365,9 +432,11 @@ async def run_write_tool(
 
     except RateLimitError as exc:
         message = str(exc)
-        lowered = message.lower()
-        if "captcha" in lowered or "challenge" in lowered:
-            await record_security_challenge()
+        session_health: dict[str, Any] | None = None
+        if _should_record_security_challenge(exc):
+            session_health = await record_security_challenge()
+        else:
+            session_health = get_session_health()
 
         cooldown_until = None
         wait_seconds = getattr(exc, "suggested_wait_time", None)
@@ -375,12 +444,22 @@ async def run_write_tool(
             cooldown = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
             cooldown_until = cooldown.isoformat().replace("+00:00", "Z")
 
+        challenge_type = getattr(exc, "challenge_type", None)
+        if challenge_type in {"captcha", "checkpoint"}:
+            error_code = "captcha_required"
+        else:
+            error_code = "rate_limit"
+
         result = write_error(
             action=action,
             message=message,
-            error_code="rate_limit",
+            error_code=error_code,
             cooldown_until=cooldown_until,
-            data=getattr(exc, "context", None),
+            data=_merge_rate_limit_data(
+                getattr(exc, "context", None),
+                challenge_type=challenge_type,
+                session_health=session_health,
+            ),
         )
         return result
 
@@ -409,3 +488,28 @@ async def run_write_tool(
             perf_counter() - started_at,
             dry_run=dry_run,
         )
+
+
+def _should_record_security_challenge(exc: RateLimitError) -> bool:
+    challenge_type = getattr(exc, "challenge_type", None)
+    if challenge_type in {"captcha", "checkpoint"}:
+        return True
+
+    lowered = str(exc).lower()
+    return any(token in lowered for token in ("captcha", "challenge", "checkpoint"))
+
+
+def _merge_rate_limit_data(
+    context: dict[str, Any] | None,
+    *,
+    challenge_type: str | None,
+    session_health: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    data: dict[str, Any] = {}
+    if context:
+        data.update(context)
+    if challenge_type:
+        data["challenge_type"] = challenge_type
+    if session_health:
+        data["session_health"] = session_health
+    return data or None

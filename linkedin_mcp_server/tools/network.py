@@ -8,10 +8,18 @@ from typing import Any
 
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
+from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from linkedin_mcp_server.core.exceptions import (
+    ElementNotFoundError,
+    InteractionError,
+)
 from linkedin_mcp_server.core.interactions import click_element, type_text
 from linkedin_mcp_server.core.selectors import SELECTORS
-from linkedin_mcp_server.core.utils import detect_rate_limit_post_action
+from linkedin_mcp_server.core.utils import (
+    detect_rate_limit_post_action,
+    handle_modal_close,
+)
 from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.tools._common import (
     goto_and_check,
@@ -24,18 +32,212 @@ from linkedin_mcp_server.tools._common import (
 logger = logging.getLogger(__name__)
 
 
+async def _click_with_overlay_protection(
+    page: Any,
+    locator: Any,
+    *,
+    timeout_ms: int = 5000,
+    failure_message: str = "Click intercepted by overlay; JS fallback also failed.",
+) -> None:
+    """Click a Playwright locator with a JS-evaluate fallback if the click is intercepted.
+
+    Bounds the failure path at ~timeout_ms instead of Playwright's 30s default and raises
+    a structured ElementNotFoundError(context={"overlay_suspected": True}) on total failure.
+    """
+    try:
+        await locator.click(timeout=timeout_ms)
+        return
+    except (PlaywrightTimeoutError, TimeoutError) as exc:
+        element_handle_fn = getattr(locator, "element_handle", None)
+        if element_handle_fn is None:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from exc
+        try:
+            handle = await element_handle_fn()
+        except Exception as inner:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from inner
+        if handle is None:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from exc
+        try:
+            await page.evaluate("(el) => el.click()", handle)
+        except Exception as inner:
+            raise ElementNotFoundError(
+                failure_message,
+                context={"overlay_suspected": True},
+            ) from inner
+
+
+# LinkedIn phrases mutual connections in three ways. The previous pattern,
+# ``([\d,.kKmM]+)\s+mutual``, required a digit immediately before "mutual" and
+# matched *none* of them -- which is why every invitation returned null rather
+# than only some. Note the singular "other" and the absence of "are".
+_MUTUAL_WITH_OTHERS_RE = re.compile(
+    r"\band\s+([\d,]+)\s+other\s+mutual\s+connections?\b", re.IGNORECASE
+)
+_MUTUAL_SINGLE_RE = re.compile(r"\bis\s+a\s+mutual\s+connection\b", re.IGNORECASE)
+_MUTUAL_BARE_RE = re.compile(r"\b([\d,]+)\s+mutual\s+connections?\b", re.IGNORECASE)
+
+# Lines that are never a headline: the degree badge, mutual-connection summary,
+# and the row's action buttons.
+_INVITE_NOISE_RE = re.compile(
+    r"^(accept|ignore|decline|message|withdraw|follow|[•·]?\s*(1st|2nd|3rd\+?))$",
+    re.IGNORECASE,
+)
+
+
 def _extract_mutual_connections(text: str) -> int | None:
-    match = re.search(r"([\d,.kKmM]+)\s+mutual", text, re.IGNORECASE)
-    if not match:
-        return None
-    return parse_count(match.group(1))
+    """Count mutual connections, including the person LinkedIn names.
+
+    "Harsh Vij and 2 other mutual connections" is three people: Harsh plus the
+    two others. Counting only the digit would under-report every card by one.
+    """
+    with_others = _MUTUAL_WITH_OTHERS_RE.search(text)
+    if with_others:
+        others = parse_count(with_others.group(1))
+        return None if others is None else others + 1
+
+    if _MUTUAL_SINGLE_RE.search(text):
+        return 1
+
+    bare = _MUTUAL_BARE_RE.search(text)
+    if bare:
+        return parse_count(bare.group(1))
+
+    return None
 
 
-def _extract_name_headline(text: str) -> tuple[str, str]:
+def _extract_name_headline(text: str) -> tuple[str, str | None]:
+    """Return the invitee's name and their actual headline.
+
+    The card repeats the name on the second line (avatar alt text), so taking
+    ``lines[1]`` positionally returned the name as the headline for every
+    invitation, making the field useless for triage. Skip anything that merely
+    repeats the name or is row furniture, and return None rather than a wrong
+    value when nothing descriptive remains.
+    """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    name = lines[0] if lines else ""
-    headline = lines[1] if len(lines) > 1 else ""
-    return name, headline
+    if not lines:
+        return "", None
+
+    name = lines[0]
+    normalized_name = name.casefold()
+
+    for line in lines[1:]:
+        if line.casefold() == normalized_name:
+            continue
+        if _INVITE_NOISE_RE.match(line):
+            continue
+        if _MUTUAL_WITH_OTHERS_RE.search(line) or _MUTUAL_SINGLE_RE.search(line):
+            continue
+        if _MUTUAL_BARE_RE.search(line):
+            continue
+        return name, line
+
+    return name, None
+
+
+async def _reject_if_not_connectable(page: Any, profile_url: str) -> None:
+    """Fail fast, and legibly, on profiles that cannot receive an invitation.
+
+    Some profiles expose only Message/Follow -- no Connect anywhere, including
+    the More actions menu. Previously the flow walked its whole fallback chain
+    and surfaced a selector error, which looks identical to a broken selector
+    and invites pointless retries against a profile that will never accept one.
+    An already-pending invitation has the same property.
+
+    Only raises when Connect is provably absent *and* a Follow/Pending control
+    is present, so a slow-rendering page still takes the normal path.
+    """
+    try:
+        if await page.get_by_role("button", name="Connect").count() > 0:
+            return
+        if await page.locator("button[aria-label*='Invite' i]").count() > 0:
+            return
+
+        pending = await page.get_by_role("button", name="Pending").count()
+        follow_only = await page.get_by_role("button", name="Follow").count()
+    except Exception:
+        # Cannot tell -- let the normal flow run rather than block a send.
+        return
+
+    if pending > 0:
+        raise InteractionError(
+            "A connection request to this profile is already pending.",
+            action="not_connectable",
+            context={"profile_url": profile_url, "reason": "already_pending"},
+        )
+
+    if follow_only > 0:
+        raise InteractionError(
+            "This profile does not accept connection requests (Follow-only). "
+            "Follow and engage with their posts instead of retrying.",
+            action="not_connectable",
+            context={"profile_url": profile_url, "reason": "follow_only"},
+        )
+
+
+async def _find_invite_dialog(page: Any) -> Any | None:
+    """Return the open invite dialog, or None if the page is not showing one.
+
+    Returning None keeps the caller working page-wide, which preserves the
+    previous behaviour on any layout that does not use a dialog. Scope narrows
+    resolution when a dialog exists; it never blocks the flow when one does not.
+    """
+    for selector in ("[role='dialog']", ".artdeco-modal"):
+        try:
+            candidate = page.locator(selector).first
+            if await candidate.count() > 0:
+                return candidate
+        except Exception:
+            continue
+
+    logger.debug("No invite dialog found; resolving against the full page")
+    return None
+
+
+async def _find_invite_button(row: Any, action: str) -> Any | None:
+    """Resolve invitation action buttons across LinkedIn DOM variants."""
+    if action == "accept":
+        candidates = [
+            lambda: row.get_by_role("button", name=re.compile(r"^Accept$", re.I)),
+            lambda: row.locator("button[aria-label*='Accept' i]"),
+            lambda: row.locator("button:has-text('Accept')"),
+            lambda: row.locator("button[data-control-name*='accept' i]"),
+        ]
+    else:
+        candidates = [
+            lambda: row.get_by_role(
+                "button", name=re.compile(r"^(Ignore|Decline)$", re.I)
+            ),
+            lambda: row.locator(
+                "button[aria-label*='Ignore' i], button[aria-label*='Decline' i]"
+            ),
+            lambda: row.locator(
+                "button:has-text('Ignore'), button:has-text('Decline')"
+            ),
+            lambda: row.locator(
+                "button[data-control-name*='ignore' i], "
+                "button[data-control-name*='decline' i]"
+            ),
+        ]
+
+    for factory in candidates:
+        locator = factory()
+        try:
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            continue
+
+    return None
 
 
 def register_network_tools(mcp: FastMCP) -> None:
@@ -69,22 +271,70 @@ def register_network_tools(mcp: FastMCP) -> None:
                 )
 
             await goto_and_check(page, normalized_url)
+            await handle_modal_close(page)
+
+            await _reject_if_not_connectable(page, normalized_url)
 
             connect_button = page.get_by_role("button", name="Connect")
             if await connect_button.count() > 0:
-                await connect_button.first.click()
+                await _click_with_overlay_protection(
+                    page,
+                    connect_button.first,
+                    failure_message=(
+                        "Connect button click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
             else:
-                await click_element(page, SELECTORS["network"]["more_actions"])
+                try:
+                    more_locator = await SELECTORS["network"]["more_actions"].find(page)
+                except Exception as exc:
+                    raise ElementNotFoundError(
+                        "Could not locate a clickable More actions control for the connection request.",
+                        context={"overlay_suspected": True},
+                    ) from exc
+                await _click_with_overlay_protection(
+                    page,
+                    more_locator,
+                    failure_message=(
+                        "More actions click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
                 menu_connect = page.get_by_role("menuitem", name="Connect")
                 if await menu_connect.count() == 0:
                     menu_connect = page.get_by_text("Connect")
-                await menu_connect.first.click()
+                if await menu_connect.count() == 0:
+                    raise ElementNotFoundError(
+                        "Could not locate Connect action after opening the More actions menu.",
+                        context={"overlay_suspected": True},
+                    )
+                await _click_with_overlay_protection(
+                    page,
+                    menu_connect.first,
+                    failure_message=(
+                        "Connect menu item click intercepted by overlay; JS fallback also failed."
+                    ),
+                )
+
+            # Everything from here happens inside the invite dialog. Resolving
+            # against the whole page let a generic strategy match the global
+            # search box -- earlier in the DOM than the note field -- so the
+            # note was typed there and #interop-outlet intercepted the click.
+            invite_dialog = await _find_invite_dialog(page)
 
             if note:
-                await click_element(page, SELECTORS["network"]["add_note"])
-                await type_text(page, SELECTORS["network"]["note_input"], note)
+                await click_element(
+                    page, SELECTORS["network"]["add_note"], scope=invite_dialog
+                )
+                await type_text(
+                    page,
+                    SELECTORS["network"]["note_input"],
+                    note,
+                    scope=invite_dialog,
+                )
 
-            await click_element(page, SELECTORS["network"]["send_invite"])
+            await click_element(
+                page, SELECTORS["network"]["send_invite"], scope=invite_dialog
+            )
             await detect_rate_limit_post_action(page)
 
             if ctx:
@@ -135,31 +385,85 @@ def register_network_tools(mcp: FastMCP) -> None:
                 page, "https://www.linkedin.com/mynetwork/invitation-manager/"
             )
 
-            rows = await SELECTORS["network"]["invitation_rows"].resolve(page)
             invitations: list[dict[str, Any]] = []
-            total_rows = await rows.count()
+
+            # Detect empty state — LinkedIn shows this when there are no invitations
+            empty_markers = page.locator(
+                "text='No pending invitations', "
+                "text='No new invitations', "
+                "h2:has-text('No pending invitations')"
+            )
+            try:
+                if await empty_markers.count() > 0:
+                    logger.debug("Invitation manager shows empty state")
+                    return {"invitations": []}
+            except Exception:
+                pass
+
+            # Use invitation-specific selectors before falling back to generic listitem.
+            # The chain's Role("listitem") is too broad — filter to rows that contain
+            # Accept/Ignore buttons, which only appear on invitation cards.
+            rows = None
+            for sel in (
+                "li.invitation-card",
+                "li.mn-invitation-manager__invitation-card",
+                "[data-view-name='invitation-card']",
+            ):
+                loc = page.locator(sel)
+                try:
+                    if await loc.count() > 0:
+                        rows = loc
+                        break
+                except Exception:
+                    continue
+
+            if rows is None:
+                # Fallback: listitems that contain an Accept or Ignore button
+                rows = page.get_by_role("listitem").filter(
+                    has=page.get_by_role(
+                        "button", name=re.compile(r"Accept|Ignore", re.IGNORECASE)
+                    )
+                )
+                try:
+                    if await rows.count() == 0:
+                        logger.debug("No invitation rows found; returning empty list")
+                        return {"invitations": []}
+                except Exception:
+                    return {"invitations": []}
+
+            total_rows = min(await rows.count(), safe_limit)
 
             for idx in range(total_rows):
                 row = rows.nth(idx)
-                anchor = row.locator('a[href*="/in/"]').first
-                if await anchor.count() == 0:
+                try:
+                    # Company/page invitations link to /company/, not /in/, so
+                    # requiring a person link silently dropped every one of them.
+                    anchor = row.locator('a[href*="/in/"]').first
+                    invitation_type = "person"
+                    if await anchor.count() == 0:
+                        anchor = row.locator('a[href*="/company/"]').first
+                        invitation_type = "page"
+                        if await anchor.count() == 0:
+                            continue
+
+                    text = await row.inner_text(timeout=2000)
+                    name, headline = _extract_name_headline(text)
+                    href = await anchor.get_attribute("href")
+                    if href and href.startswith("/"):
+                        href = f"https://www.linkedin.com{href}"
+
+                    invitations.append(
+                        {
+                            "name": name,
+                            "profile_url": href,
+                            "headline": headline,
+                            "mutual_connections": _extract_mutual_connections(text),
+                            "invitation_type": invitation_type,
+                            "invitation_index": idx,
+                        }
+                    )
+                except Exception:
                     continue
-
-                text = await row.inner_text(timeout=2000)
-                name, headline = _extract_name_headline(text)
-                href = await anchor.get_attribute("href")
-                if href and href.startswith("/"):
-                    href = f"https://www.linkedin.com{href}"
-
-                invitations.append(
-                    {
-                        "name": name,
-                        "profile_url": href,
-                        "headline": headline,
-                        "mutual_connections": _extract_mutual_connections(text),
-                        "invitation_index": idx,
-                    }
-                )
                 if len(invitations) >= safe_limit:
                     break
 
@@ -227,19 +531,14 @@ def register_network_tools(mcp: FastMCP) -> None:
             if target_row is None:
                 raise ValueError("Invitation not found for the provided profile URL")
 
-            if normalized_action == "accept":
-                button = target_row.get_by_role("button", name="Accept")
-            else:
-                button = target_row.get_by_role("button", name="Ignore")
-                if await button.count() == 0:
-                    button = target_row.get_by_role("button", name="Decline")
-
-            if await button.count() == 0:
-                raise ValueError(
-                    f"Could not find {normalized_action} button for invitation"
+            button = await _find_invite_button(target_row, normalized_action)
+            if button is None:
+                raise ElementNotFoundError(
+                    f"Could not locate {normalized_action} button for invitation. "
+                    "LinkedIn may have changed the DOM - fall back to Chrome MCP."
                 )
 
-            await button.first.click()
+            await button.click()
             await detect_rate_limit_post_action(page)
 
             if ctx:

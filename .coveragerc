@@ -4,5 +4,5 @@ branch = true
 omit = linkedin_mcp_server/__main__.py
 
 [report]
-fail_under = 45
+fail_under = 65
 show_missing = true

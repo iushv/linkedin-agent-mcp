@@ -138,9 +138,13 @@ class TestOpenToWork:
         from linkedin_mcp_server.tools.profile import register_profile_tools
 
         page = MagicMock()
-        body = MagicMock()
-        body.inner_text = AsyncMock(return_value="Open to work • Show recruiters")
-        page.locator = MagicMock(return_value=body)
+        # The OTW detection iterates selectors calling page.locator(sel).first
+        # and checking count(). Return a locator that matches one of them.
+        otw_locator = MagicMock()
+        otw_first = MagicMock()
+        otw_first.count = AsyncMock(return_value=1)
+        otw_locator.first = otw_first
+        page.locator = MagicMock(return_value=otw_locator)
         mcp = FastMCP("test")
         register_profile_tools(mcp)
 

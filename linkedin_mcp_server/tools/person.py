@@ -11,13 +11,12 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from linkedin_mcp_server.drivers.browser import (
-    ensure_authenticated,
-    get_or_create_browser,
-)
-from linkedin_mcp_server.error_handler import handle_tool_error
+from linkedin_mcp_server.drivers.browser import get_or_create_browser
 from linkedin_mcp_server.scraping import LinkedInExtractor, parse_person_sections
-from linkedin_mcp_server.tools._common import extract_profile_slug
+from linkedin_mcp_server.tools._common import (
+    extract_profile_slug,
+    run_legacy_read_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +56,8 @@ def register_person_tools(mcp: FastMCP) -> None:
             Sections may be absent if extraction yielded no content for that page.
             The LLM should parse the raw text in each section.
         """
-        try:
-            await ensure_authenticated()
 
+        async def _fetch() -> dict[str, Any]:
             fields, unknown = parse_person_sections(sections)
             profile_slug = extract_profile_slug(linkedin_username)
 
@@ -85,5 +83,4 @@ def register_person_tools(mcp: FastMCP) -> None:
 
             return result
 
-        except Exception as e:
-            return handle_tool_error(e, "get_person_profile")
+        return await run_legacy_read_tool("get_person_profile", _fetch)

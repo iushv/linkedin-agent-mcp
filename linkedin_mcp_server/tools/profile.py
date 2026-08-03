@@ -33,31 +33,139 @@ async def _read_current_headline(page: Any) -> str | None:
 
 
 async def _read_open_to_work_enabled(page: Any) -> bool:
+    # Check specific DOM selectors for the Open To Work badge/section
+    _OTW_SELECTORS = (
+        "#open-to-work-modal-header",
+        "section[class*='open-to-work']",
+        ".pv-open-to-work-section",
+        "div[class*='open-to-work']",
+        "button[aria-label*='Open to work' i]",
+        "[data-view-name*='open-to-work']",
+        # Profile photo overlay badge
+        "img[alt*='Open to work' i]",
+        "span.pv-member-badge--open-to-work",
+        ".pv-top-card--open-to-work",
+    )
+    for sel in _OTW_SELECTORS:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0:
+                return True
+        except Exception:
+            continue
+
+    # Fallback: check body text for the phrase in context
     try:
-        body_text = await page.locator("body").inner_text(timeout=1000)
+        # Read only the top card / profile header to avoid false positives
+        for scope_sel in (
+            "section.pv-top-card",
+            ".pv-top-card",
+            "main section:first-of-type",
+        ):
+            try:
+                scope = page.locator(scope_sel).first
+                if await scope.count() > 0:
+                    scope_text = await scope.inner_text(timeout=1500)
+                    lowered = scope_text.lower()
+                    if "open to work" in lowered or "show recruiters" in lowered:
+                        return True
+            except Exception:
+                continue
     except Exception:
-        return False
-    lowered = body_text.lower()
-    return "open to work" in lowered or "show recruiters" in lowered
+        pass
+
+    return False
 
 
 async def _read_featured_skills(page: Any) -> list[str]:
-    try:
-        rows = page.locator("span.pv-skill-category-entity__name-text")
-        count = min(await rows.count(), 5)
-    except Exception:
-        return []
+    """Read skill names from the skills detail page.
 
-    skills: list[str] = []
-    for idx in range(count):
+    LinkedIn's 2025+ DOM uses obfuscated CSS classes.  Skills are in
+    ``tabpanel > list > listitem > link[href*='keywords=']`` where the
+    link text is the skill name.
+    """
+    # Strategy 1: 2025+ DOM — skill links with search keywords
+    _SKILL_LINK_SELECTORS = (
+        "tabpanel a[href*='keywords=']",
+        "[role='tabpanel'] a[href*='keywords=']",
+        "main a[href*='keywords='][href*='SKILL']",
+    )
+    for selector in _SKILL_LINK_SELECTORS:
         try:
-            text = await rows.nth(idx).inner_text(timeout=500)
+            rows = page.locator(selector)
+            count = min(await rows.count(), 20)
+            if count == 0:
+                continue
         except Exception:
             continue
-        value = " ".join(text.split())
-        if value:
-            skills.append(value)
-    return skills
+
+        skills: list[str] = []
+        seen: set[str] = set()
+        for idx in range(count):
+            try:
+                text = await rows.nth(idx).inner_text(timeout=500)
+            except Exception:
+                continue
+            value = " ".join(text.split())
+            # Skill names appear twice in the link — deduplicate
+            if value and len(value) > 1 and value not in seen:
+                seen.add(value)
+                skills.append(value)
+
+        if skills:
+            return skills[:10]
+
+    # Strategy 2: edit buttons with alt="Edit <Skill>"
+    try:
+        edit_imgs = page.locator("img[alt^='Edit ']")
+        count = min(await edit_imgs.count(), 20)
+        if count > 0:
+            skills: list[str] = []
+            seen: set[str] = set()
+            for idx in range(count):
+                try:
+                    alt = await edit_imgs.nth(idx).get_attribute("alt", timeout=300)
+                    if alt and alt.startswith("Edit "):
+                        name = alt[5:].strip()
+                        if name and name not in seen:
+                            seen.add(name)
+                            skills.append(name)
+                except Exception:
+                    continue
+            if skills:
+                return skills[:10]
+    except Exception:
+        pass
+
+    # Strategy 3: legacy CSS selectors (pre-2025)
+    _LEGACY_SELECTORS = (
+        "span.pv-skill-category-entity__name-text",
+        "li.pvs-list__paged-list-item .t-bold span",
+        "[class*='skill-category-entity'] span",
+    )
+    for selector in _LEGACY_SELECTORS:
+        try:
+            rows = page.locator(selector)
+            count = min(await rows.count(), 10)
+            if count == 0:
+                continue
+        except Exception:
+            continue
+
+        skills = []
+        for idx in range(count):
+            try:
+                text = await rows.nth(idx).inner_text(timeout=500)
+            except Exception:
+                continue
+            value = " ".join(text.split())
+            if value and len(value) > 1:
+                skills.append(value)
+
+        if skills:
+            return skills[:10]
+
+    return []
 
 
 async def _open_intro_editor(page: Any) -> None:

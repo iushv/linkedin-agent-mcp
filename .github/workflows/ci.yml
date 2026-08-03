@@ -32,6 +32,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -39,11 +43,25 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv python install 3.14
+      - run: uv python install ${{ matrix.python-version }}
 
-      - run: uv sync --group dev
+      - run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run pytest --cov --cov-report=term-missing -n auto -v -s
+        run: uv run --no-sync pytest --cov --cov-report=term-missing -n auto
 
       - run: uv cache prune --ci
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b # v7
+        with:
+          enable-cache: true
+
+      - name: Audit production dependencies for known vulnerabilities
+        run: |
+          uv export --frozen --no-emit-project --no-hashes --no-dev --format requirements-txt -o requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt --disable-pip --no-deps
