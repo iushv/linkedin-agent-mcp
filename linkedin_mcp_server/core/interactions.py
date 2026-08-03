@@ -13,6 +13,11 @@ from .exceptions import InteractionError
 from .selectors import LocatorChain
 
 
+# Extra milliseconds on top of the keystroke time, covering focus, the
+# clear-field call and general page latency.
+_TYPE_TIMEOUT_HEADROOM_MS = 5000
+
+
 async def human_delay(min_ms: int = 500, max_ms: int = 1500) -> None:
     """Sleep for a random short duration to reduce bot-like timing patterns."""
     if min_ms < 0 or max_ms < 0:
@@ -90,12 +95,25 @@ async def type_text(
         await human_delay(120, 400)
 
         if len(text) < 200:
-            # Short text — keystroke simulation is fine
+            # Short text — keystroke simulation is fine.
             try:
                 await locator.fill("", timeout=timeout)
             except Exception:
                 pass
-            await locator.type(text, delay=delay, timeout=timeout)
+
+            # The timeout must cover the whole keystroke sequence, not a fixed
+            # budget. At the defaults (50ms/char, 5000ms) anything over 100
+            # characters could never finish -- and because the fill() fallback
+            # below only engages at 200, every note between 100 and 199 chars
+            # was a guaranteed timeout. A 129-character invite note needs
+            # 6450ms and got 5000.
+            keystroke_ms = len(text) * delay
+            type_timeout = (
+                keystroke_ms + _TYPE_TIMEOUT_HEADROOM_MS
+                if keystroke_ms >= timeout
+                else timeout
+            )
+            await locator.type(text, delay=delay, timeout=type_timeout)
         else:
             # Long text — inject directly to avoid keystroke timeout.
             # Try fill() first (works on <input>/<textarea>), then

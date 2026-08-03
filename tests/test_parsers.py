@@ -1058,3 +1058,64 @@ class TestInvitationNameHeadline:
         from linkedin_mcp_server.tools.network import _extract_name_headline
 
         assert _extract_name_headline("") == ("", None)
+
+
+class TestNotConnectableDetection:
+    """Follow-only profiles must fail as 'not connectable', not as a selector bug.
+
+    Gaurav Kumar Rai exposed only Message/Follow. The flow walked its whole
+    fallback chain and raised a selector error, which is indistinguishable from
+    a broken selector and invites retries that can never succeed.
+    """
+
+    def _page(self, *, connect=0, invite=0, pending=0, follow=0):
+        from unittest.mock import AsyncMock, MagicMock
+
+        page = MagicMock()
+
+        def by_role(role, name=None, **kw):
+            loc = MagicMock()
+            counts = {"Connect": connect, "Pending": pending, "Follow": follow}
+            loc.count = AsyncMock(return_value=counts.get(name, 0))
+            return loc
+
+        page.get_by_role = MagicMock(side_effect=by_role)
+        invite_loc = MagicMock()
+        invite_loc.count = AsyncMock(return_value=invite)
+        page.locator = MagicMock(return_value=invite_loc)
+        return page
+
+    @pytest.mark.asyncio
+    async def test_follow_only_profile_is_rejected(self):
+        from linkedin_mcp_server.core.exceptions import InteractionError
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        with pytest.raises(InteractionError, match="Follow-only"):
+            await _reject_if_not_connectable(self._page(follow=1), "https://x/in/a/")
+
+    @pytest.mark.asyncio
+    async def test_pending_invitation_is_rejected(self):
+        from linkedin_mcp_server.core.exceptions import InteractionError
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        with pytest.raises(InteractionError, match="already pending"):
+            await _reject_if_not_connectable(self._page(pending=1), "https://x/in/a/")
+
+    @pytest.mark.asyncio
+    async def test_connectable_profile_passes_through(self):
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(connect=1, follow=1), "https://x/")
+
+    @pytest.mark.asyncio
+    async def test_invite_aria_label_counts_as_connectable(self):
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(invite=1, follow=1), "https://x/")
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_page_does_not_block_the_send(self):
+        """No Connect and no Follow: cannot tell, so let the normal flow try."""
+        from linkedin_mcp_server.tools.network import _reject_if_not_connectable
+
+        await _reject_if_not_connectable(self._page(), "https://x/in/a/")

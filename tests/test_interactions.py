@@ -315,3 +315,84 @@ class TestClickAndConfirm:
             pytest.raises(InteractionError, match="click failed"),
         ):
             await click_and_confirm(page, click_chain, confirm_chain)
+
+
+class TestTypeTimeoutCoversKeystrokes:
+    """The typing timeout must cover the whole keystroke sequence.
+
+    At the defaults (50ms/char, 5000ms) anything over 100 characters could
+    never finish, while the fill() fast path only engages at 200 -- so every
+    note between 100 and 199 characters was a guaranteed timeout. A real
+    129-character invite note needs 6450ms and was given 5000.
+    """
+
+    @pytest.mark.asyncio
+    async def test_long_note_gets_a_budget_that_fits(self):
+        from linkedin_mcp_server.core.interactions import type_text
+
+        note = "x" * 129
+        locator = MagicMock()
+        locator.click = AsyncMock()
+        locator.fill = AsyncMock()
+        locator.type = AsyncMock()
+
+        chain = MagicMock()
+        chain.name = "network_note_input"
+        chain.find = AsyncMock(return_value=locator)
+
+        with patch(
+            "linkedin_mcp_server.core.interactions.human_delay", new=AsyncMock()
+        ):
+            await type_text(MagicMock(), chain, note)
+
+        assert locator.type.await_args is not None
+        granted = locator.type.await_args.kwargs["timeout"]
+        required = len(note) * 50
+        assert granted > required, (
+            f"{len(note)} chars need {required}ms but only {granted}ms was allowed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_short_note_keeps_the_default_floor(self):
+        from linkedin_mcp_server.core.interactions import type_text
+
+        locator = MagicMock()
+        locator.click = AsyncMock()
+        locator.fill = AsyncMock()
+        locator.type = AsyncMock()
+
+        chain = MagicMock()
+        chain.name = "network_note_input"
+        chain.find = AsyncMock(return_value=locator)
+
+        with patch(
+            "linkedin_mcp_server.core.interactions.human_delay", new=AsyncMock()
+        ):
+            await type_text(MagicMock(), chain, "hi")
+
+        assert locator.type.await_args is not None
+        assert locator.type.await_args.kwargs["timeout"] >= 5000
+
+    @pytest.mark.asyncio
+    async def test_every_length_in_the_dead_zone_is_survivable(self):
+        """100-199 chars was the band that always failed."""
+        from linkedin_mcp_server.core.interactions import type_text
+
+        for length in (100, 129, 150, 199):
+            locator = MagicMock()
+            locator.click = AsyncMock()
+            locator.fill = AsyncMock()
+            locator.type = AsyncMock()
+
+            chain = MagicMock()
+            chain.name = "chain"
+            chain.find = AsyncMock(return_value=locator)
+
+            with patch(
+                "linkedin_mcp_server.core.interactions.human_delay", new=AsyncMock()
+            ):
+                await type_text(MagicMock(), chain, "y" * length)
+
+            assert locator.type.await_args is not None
+            granted = locator.type.await_args.kwargs["timeout"]
+            assert granted > length * 50, f"{length} chars still under-budgeted"

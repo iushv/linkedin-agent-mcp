@@ -10,7 +10,10 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from linkedin_mcp_server.core.exceptions import ElementNotFoundError
+from linkedin_mcp_server.core.exceptions import (
+    ElementNotFoundError,
+    InteractionError,
+)
 from linkedin_mcp_server.core.interactions import click_element, type_text
 from linkedin_mcp_server.core.selectors import SELECTORS
 from linkedin_mcp_server.core.utils import (
@@ -141,6 +144,46 @@ def _extract_name_headline(text: str) -> tuple[str, str | None]:
     return name, None
 
 
+async def _reject_if_not_connectable(page: Any, profile_url: str) -> None:
+    """Fail fast, and legibly, on profiles that cannot receive an invitation.
+
+    Some profiles expose only Message/Follow -- no Connect anywhere, including
+    the More actions menu. Previously the flow walked its whole fallback chain
+    and surfaced a selector error, which looks identical to a broken selector
+    and invites pointless retries against a profile that will never accept one.
+    An already-pending invitation has the same property.
+
+    Only raises when Connect is provably absent *and* a Follow/Pending control
+    is present, so a slow-rendering page still takes the normal path.
+    """
+    try:
+        if await page.get_by_role("button", name="Connect").count() > 0:
+            return
+        if await page.locator("button[aria-label*='Invite' i]").count() > 0:
+            return
+
+        pending = await page.get_by_role("button", name="Pending").count()
+        follow_only = await page.get_by_role("button", name="Follow").count()
+    except Exception:
+        # Cannot tell -- let the normal flow run rather than block a send.
+        return
+
+    if pending > 0:
+        raise InteractionError(
+            "A connection request to this profile is already pending.",
+            action="not_connectable",
+            context={"profile_url": profile_url, "reason": "already_pending"},
+        )
+
+    if follow_only > 0:
+        raise InteractionError(
+            "This profile does not accept connection requests (Follow-only). "
+            "Follow and engage with their posts instead of retrying.",
+            action="not_connectable",
+            context={"profile_url": profile_url, "reason": "follow_only"},
+        )
+
+
 async def _find_invite_dialog(page: Any) -> Any | None:
     """Return the open invite dialog, or None if the page is not showing one.
 
@@ -229,6 +272,8 @@ def register_network_tools(mcp: FastMCP) -> None:
 
             await goto_and_check(page, normalized_url)
             await handle_modal_close(page)
+
+            await _reject_if_not_connectable(page, normalized_url)
 
             connect_button = page.get_by_role("button", name="Connect")
             if await connect_button.count() > 0:
